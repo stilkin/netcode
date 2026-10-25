@@ -5,23 +5,30 @@
 /// must still produce a clean stop.
 pub struct Signals {
     #[cfg(unix)]
+    interrupt: tokio::signal::unix::Signal,
+    #[cfg(unix)]
     term: Option<tokio::signal::unix::Signal>,
 }
 
 impl Signals {
     /// Installs the signal handlers.
+    ///
+    /// Both handlers are armed synchronously here; nothing is registered
+    /// lazily on first poll.
     pub fn install() -> Self {
         #[cfg(unix)]
         {
-            let term =
-                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                    Ok(term) => Some(term),
-                    Err(err) => {
-                        tracing::warn!(%err, "cannot listen for SIGTERM; Ctrl-C only");
-                        None
-                    }
-                };
-            Self { term }
+            use tokio::signal::unix::{SignalKind, signal};
+            let interrupt =
+                signal(SignalKind::interrupt()).expect("SIGINT handler registration cannot fail");
+            let term = match signal(SignalKind::terminate()) {
+                Ok(term) => Some(term),
+                Err(err) => {
+                    tracing::warn!(%err, "cannot listen for SIGTERM; Ctrl-C only");
+                    None
+                }
+            };
+            Self { interrupt, term }
         }
         #[cfg(not(unix))]
         Self {}
@@ -31,15 +38,14 @@ impl Signals {
     pub async fn first(&mut self) {
         #[cfg(unix)]
         {
-            let ctrl_c = tokio::signal::ctrl_c();
             if let Some(term) = self.term.as_mut() {
                 tokio::select! {
-                    _ = ctrl_c => {}
+                    _ = self.interrupt.recv() => {}
                     _ = term.recv() => {}
                 }
                 return;
             }
-            let _ = ctrl_c.await;
+            self.interrupt.recv().await;
         }
         #[cfg(not(unix))]
         {

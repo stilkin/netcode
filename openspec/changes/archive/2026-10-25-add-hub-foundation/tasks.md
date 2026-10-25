@@ -20,8 +20,8 @@
 - [x] 3.5 Integration test: boot hub with temp config, capture startup log line, deliver SIGINT, assert exit 0 (`#[cfg(unix)]`-gated). *(Graceful shutdown, Structured logging)*
 
 ## 4. build-pipeline
-- [ ] 4.1 `.github/workflows/ci.yml`: matrix `ubuntu-latest`/`windows-latest`; checkout, stable toolchain, rust cache; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. *(Cross-platform CI gate)*
+- [x] 4.1 `.github/workflows/ci.yml`: matrix `ubuntu-latest`/`windows-latest`; checkout, stable toolchain, rust cache; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. *(Cross-platform CI gate)*
 
 ## 5. Wrap-up
-- [ ] 5.1 Install openspec CLI if available and run `openspec validate --changes`; fix any artifact complaints.
-- [ ] 5.2 Mark change 1 implemented in README roadmap; `openspec archive add-hub-foundation` to merge deltas into `openspec/specs/`.
+- [x] 5.1 Install openspec CLI if available and run `openspec validate --changes`; fix any artifact complaints.
+- [x] 5.2 Mark change 1 implemented in README roadmap; `openspec archive add-hub-foundation` to merge deltas into `openspec/specs/`.

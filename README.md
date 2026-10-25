@@ -42,7 +42,7 @@ reviewable and leaves the workspace green.
 
 | # | Change | Scope | Capabilities created |
 |---|--------|-------|----------------------|
-| 1 | `add-hub-foundation` **(drafted)** | Cargo workspace; wire header v1 codec pinned by golden vectors; hub binary shell (config, logging, graceful shutdown); CI matrix Ubuntu+Windows | `wire-protocol`, `hub-runtime`, `build-pipeline` |
+| 1 | `add-hub-foundation` **(implemented)** | Cargo workspace; wire header v1 codec pinned by golden vectors; hub binary shell (config, logging, graceful shutdown); CI matrix Ubuntu+Windows | `wire-protocol`, `hub-runtime`, `build-pipeline` |
 | 2 | `add-backplane-game-workers` | Loopback-TCP backplane (register/attach/route/broadcast/heartbeat opcodes); `hub-sdk` with `GameSession` trait; session registry + process watchdog; sample worker; end-to-end loopback test | `backplane`, `session-registry`, `hub-sdk` |
 | 3 | `add-webtransport-client-edge` | WebTransport endpoint (self-signed cert + served cert hash), client handshake with connect tokens, channel mapping (state→datagrams, events→stream), relay routing with backpressure policy | `client-edge`, `client-protocol` |
 | 4 | `add-lobby-admin-api` | HTTP JSON API: list games/sessions, create/close session (spawns worker), kick client; session metadata for directory UIs | `lobby-api` |
