@@ -124,5 +124,9 @@ cargo fmt --all -- --check                          # CI: formatting
 cargo clippy --workspace --all-targets -- -D warnings  # CI: lints
 ```
 
+A version-controlled pre-commit hook (`.githooks/pre-commit`) runs the same
+gates before every commit — activate once per clone with
+`git config core.hooksPath .githooks`.
+
 Changes to behavior go through the spec workflow described in
 [docs/development.md](docs/development.md) — requirements first, then code.

@@ -52,6 +52,32 @@ cargo test --workspace                              # unit + golden + integratio
 CI runs the same three on `ubuntu-latest` and `windows-latest`; a change is
 mergeable only when the matrix is green.
 
+## Git hooks
+
+A pre-commit hook runs the same gates as CI (fmt, clippy, tests) before every
+commit. It is version-controlled at `.githooks/pre-commit` and activated once
+per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Work-in-progress escape hatch: `git commit --no-verify` (CI still runs).
+
+## Coverage
+
+Coverage is measured with `cargo-llvm-cov`:
+
+```sh
+cargo install cargo-llvm-cov            # once; also: rustup component add llvm-tools-preview
+cargo llvm-cov --workspace --summary-only   # add --html for a browsable report
+```
+
+Current state: ~94% line coverage; `crates/protocol` — the interop contract —
+is at 100%. The uncovered remainder is dominated by branches that are
+deliberately not chased with contrived tests: OS-specific signal fallbacks,
+the second-signal exit (130), and the fatal-exit (2) mapping.
+
 ## Conventions
 
 - **Pure-Rust dependencies only** (no C/C++ build deps) — this is what keeps

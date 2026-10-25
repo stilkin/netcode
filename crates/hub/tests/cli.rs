@@ -56,3 +56,24 @@ fn boots_logs_and_shuts_down_cleanly() {
     });
     assert!(stopped, "shutdown log line was not observed");
 }
+
+/// Invalid configuration exits 1 and names the offending key.
+/// (Configuration loading)
+#[test]
+fn invalid_config_exits_1() {
+    let dir = std::env::temp_dir().join(format!("hub-cli-bad-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(dir.join("hub.toml"), "log_lvl = \"info\"\n").expect("write bad config");
+
+    let out = hub()
+        .current_dir(&dir)
+        .output()
+        .expect("run hub with bad config");
+
+    assert_eq!(out.status.code(), Some(1), "expected the config exit code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("log_lvl"),
+        "error should name the key: {stderr}"
+    );
+}

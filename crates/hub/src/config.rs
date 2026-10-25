@@ -66,3 +66,53 @@ impl Config {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn write_tmp(name: &str, contents: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("hub-cfg-test-{}-{name}", std::process::id()));
+        std::fs::write(&path, contents).expect("write temp config");
+        path
+    }
+
+    /// A missing file means all defaults. (Configuration loading)
+    #[test]
+    fn missing_file_means_defaults() {
+        let config = Config::load(Path::new("/nonexistent/hub.toml")).expect("defaults");
+        assert_eq!(config, Config::default());
+        assert_eq!(config.log_level, "info");
+    }
+
+    /// A valid file parses. (Configuration loading)
+    #[test]
+    fn valid_file_parses() {
+        let path = write_tmp("valid", "log_level = \"debug\"\n");
+        let config = Config::load(&path).expect("valid config");
+        assert_eq!(config.log_level, "debug");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// An unknown key is rejected and named. (Configuration loading)
+    #[test]
+    fn unknown_key_names_the_key() {
+        let path = write_tmp("unknown-key", "log_lvl = \"info\"\n");
+        let err = Config::load(&path).expect_err("typo must fail");
+        assert!(err.to_string().contains("log_lvl"), "error: {err}");
+    }
+
+    /// An invalid level is rejected and named. (Configuration loading)
+    #[test]
+    fn invalid_level_names_the_key() {
+        let path = write_tmp("bad-level", "log_level = \"loud\"\n");
+        let err = Config::load(&path).expect_err("bad level must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("log_level") && msg.contains("loud"),
+            "error: {msg}"
+        );
+    }
+}
