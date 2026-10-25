@@ -1,0 +1,31 @@
+schema: spec-driven
+
+# Project context — constraints that guide all OpenSpec artifacts.
+context: |
+  Netcode hub for LAN-party multiplayer: one Rust server binary that terminates
+  client connections (desktop browsers over WebTransport), routes opaque packets
+  by header to per-session game-worker processes, and exposes a lobby/admin HTTP
+  API. Greenfield repo. Server is client-technology-agnostic: the wire protocol
+  is the contract, payloads are opaque to the hub. Game logic lives in separate
+  worker processes added at runtime; the hub is never rebuilt to add a game.
+  Targets Windows (desktop) and Ubuntu (server) identically.
+
+  Prime directive: keep it simple, elegant, maintainable.
+  - Smallest crate set and dependency list that works; no speculative layers.
+  - Pure-Rust dependencies only (no C/C++ build deps) so both platforms build
+    with one toolchain and one CI matrix.
+  - Game decisions are simulated server-side (in workers); clients stay dumb
+    (send inputs, interpolate, render).
+
+rules:
+  proposal:
+    - State explicitly what is out of scope.
+    - One reviewable unit per change; split anything larger.
+  specs:
+    - Requirements describe observable behavior, never implementation detail.
+    - Every requirement has at least one WHEN/THEN scenario.
+  design:
+    - Record each decision with alternatives considered and why the choice won.
+  tasks:
+    - Every task traces to a requirement; no orphan tasks.
+    - Order tasks so the workspace compiles and tests stay green after each.
