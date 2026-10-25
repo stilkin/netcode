@@ -13,11 +13,11 @@
 - [x] 2.6 Round-trip test sweeping representative values of every field, including payload correctness at non-default `header_size`. *(Canonical packet header)*
 
 ## 3. hub-runtime
-- [ ] 3.1 clap-derive CLI: `--config <path>` (default `hub.toml`), `--version` printing `<name> <semver>` from `CARGO_PKG_VERSION`. *(Version reporting)*
-- [ ] 3.2 Config structs (serde + toml, `deny_unknown_fields`), all-default when file missing, error names the offending key, exit code 1 on invalid config. *(Configuration loading)*
-- [ ] 3.3 `tracing-subscriber` env-filter init; config level default `info`, `RUST_LOG` overrides; startup line with version + resolved config. *(Structured logging)*
-- [ ] 3.4 tokio runtime + signal handling: first SIGINT/SIGTERM/Ctrl-C begins graceful shutdown (5 s cap), second signal exits immediately, clean shutdown exits 0, fatal errors exit 2. *(Graceful shutdown)*
-- [ ] 3.5 Integration test: boot hub with temp config, capture startup log line, deliver SIGINT, assert exit 0 (`#[cfg(unix)]`-gated). *(Graceful shutdown, Structured logging)*
+- [x] 3.1 clap-derive CLI: `--config <path>` (default `hub.toml`), `--version` printing `<name> <semver>` from `CARGO_PKG_VERSION`. *(Version reporting)*
+- [x] 3.2 Config structs (serde + toml, `deny_unknown_fields`), all-default when file missing, error names the offending key, exit code 1 on invalid config. *(Configuration loading)*
+- [x] 3.3 `tracing-subscriber` env-filter init; config level default `info`, `RUST_LOG` overrides; startup line with version + resolved config. *(Structured logging)*
+- [x] 3.4 tokio runtime + signal handling: first SIGINT/SIGTERM/Ctrl-C begins graceful shutdown (5 s cap), second signal exits immediately, clean shutdown exits 0, fatal errors exit 2. *(Graceful shutdown)*
+- [x] 3.5 Integration test: boot hub with temp config, capture startup log line, deliver SIGINT, assert exit 0 (`#[cfg(unix)]`-gated). *(Graceful shutdown, Structured logging)*
 
 ## 4. build-pipeline
 - [ ] 4.1 `.github/workflows/ci.yml`: matrix `ubuntu-latest`/`windows-latest`; checkout, stable toolchain, rust cache; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. *(Cross-platform CI gate)*
