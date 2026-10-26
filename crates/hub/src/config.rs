@@ -15,12 +15,38 @@ use serde::Deserialize;
 pub struct Config {
     /// Log level: one of `trace`, `debug`, `info`, `warn`, `error`.
     pub log_level: String,
+    /// Hub-to-worker listener settings.
+    pub backplane: BackplaneConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             log_level: "info".to_owned(),
+            backplane: BackplaneConfig::default(),
+        }
+    }
+}
+
+/// Backplane listener settings.
+///
+/// The bind address is loopback by design: the backplane is a trusted,
+/// same-machine control plane, not an internet-facing port.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct BackplaneConfig {
+    /// Address the listener binds to, e.g. `127.0.0.1:24000`.
+    pub bind: String,
+    /// Shared token workers must present in `Hello`. Empty disables the
+    /// check (loopback trust).
+    pub token: String,
+}
+
+impl Default for BackplaneConfig {
+    fn default() -> Self {
+        Self {
+            bind: "127.0.0.1:24000".to_owned(),
+            token: String::new(),
         }
     }
 }
@@ -61,6 +87,13 @@ impl Config {
                 "invalid config in {}: `log_level` = {:?} is not a valid level: {err}",
                 path.display(),
                 config.log_level
+            )));
+        }
+        if let Err(err) = config.backplane.bind.parse::<std::net::SocketAddr>() {
+            return Err(ConfigError(format!(
+                "invalid config in {}: `backplane.bind` = {:?} is not a valid address: {err}",
+                path.display(),
+                config.backplane.bind
             )));
         }
         Ok(config)
@@ -114,5 +147,56 @@ mod tests {
             msg.contains("log_level") && msg.contains("loud"),
             "error: {msg}"
         );
+    }
+}
+
+#[cfg(test)]
+mod backplane_config_tests {
+    use super::*;
+
+    fn write_tmp(name: &str, contents: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("hub-cfg-test-{}-{name}", std::process::id()));
+        std::fs::write(&path, contents).expect("write temp config");
+        path
+    }
+
+    /// (hub-runtime: Configuration loading) Defaults include the backplane.
+    #[test]
+    fn defaults_include_backplane() {
+        let config = Config::load(Path::new("/nonexistent/hub.toml")).expect("defaults");
+        assert_eq!(config.backplane.bind, "127.0.0.1:24000");
+        assert_eq!(config.backplane.token, "");
+    }
+
+    /// (hub-runtime: Configuration loading) A valid section parses.
+    #[test]
+    fn backplane_section_parses() {
+        let path = write_tmp(
+            "backplane-valid",
+            "log_level = \"debug\"\n[backplane]\nbind = \"127.0.0.1:24111\"\ntoken = \"s3cret\"\n",
+        );
+        let config = Config::load(&path).expect("valid config");
+        assert_eq!(config.backplane.bind, "127.0.0.1:24111");
+        assert_eq!(config.backplane.token, "s3cret");
+    }
+
+    /// (hub-runtime: Configuration loading) Unknown nested keys are rejected.
+    #[test]
+    fn unknown_backplane_key_is_rejected() {
+        let path = write_tmp(
+            "backplane-typo",
+            "[backplane]\nprot = \"127.0.0.1:24000\"\n",
+        );
+        let err = Config::load(&path).expect_err("typo must fail");
+        assert!(err.to_string().contains("prot"), "error: {err}");
+    }
+
+    /// (hub-runtime: Configuration loading) An invalid bind address is rejected.
+    #[test]
+    fn invalid_bind_is_rejected() {
+        let path = write_tmp("backplane-bind", "[backplane]\nbind = \"nonsense\"\n");
+        let err = Config::load(&path).expect_err("bad bind must fail");
+        assert!(err.to_string().contains("backplane.bind"), "error: {err}");
     }
 }

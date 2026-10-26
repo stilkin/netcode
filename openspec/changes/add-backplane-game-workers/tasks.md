@@ -10,12 +10,12 @@
 - [x] 2.3 Unit tests: round-trip every opcode, cap rejection, string edge cases (empty, non-ASCII).
 
 ## 3. hub config: backplane section *(hub-runtime: Configuration loading)*
-- [ ] 3.1 `[backplane]` table: `bind` (default `127.0.0.1:24000`), `token` (optional); nested `deny_unknown_fields`; defaults boot without file.
-- [ ] 3.2 Unit tests: defaults, valid section, unknown nested key rejected.
+- [x] 3.1 `[backplane]` table: `bind` (default `127.0.0.1:24000`), `token` (optional); nested `deny_unknown_fields`; defaults boot without file.
+- [x] 3.2 Unit tests: defaults, valid section, unknown nested key rejected.
 
 ## 4. hub: session registry *(session-registry: all requirements)*
-- [ ] 4.1 Registry types: session states (pending/active/closed), metadata, monotonic non-reused ids; attach/detach with capacity check; per-client outbound queues (`ClientHandle { id, rx }`).
-- [ ] 4.2 Unit tests: distinct concurrent ids, player-count tracking, full-session refusal, pending not joinable, idempotent close, id non-reuse.
+- [x] 4.1 Registry types: session states (pending/active/closed), metadata, monotonic non-reused ids; attach/detach with capacity check; per-client outbound queues (`ClientHandle { id, rx }`).
+- [x] 4.2 Unit tests: distinct concurrent ids, player-count tracking, full-session refusal, pending not joinable, idempotent close, id non-reuse.
 
 ## 5. hub: backplane service *(backplane: Authentication, registration, notifications, delivery, fan-out, liveness, closure)*
 - [ ] 5.1 Accept loop + auth (token compare, `Hello`-first enforcement) + registration/claim paths incl. pending-entry timeout.
