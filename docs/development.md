@@ -81,10 +81,12 @@ cargo install cargo-llvm-cov            # once; also: rustup component add llvm-
 cargo llvm-cov --workspace --summary-only   # add --html for a browsable report
 ```
 
-Current state: ~94% line coverage; `crates/protocol` — the interop contract —
-is at 100%. The uncovered remainder is dominated by branches that are
-deliberately not chased with contrived tests: OS-specific signal fallbacks,
-the second-signal exit (130), and the fatal-exit (2) mapping.
+Current state: ~91% line coverage overall; `crates/protocol` — the
+interop contract — is at 100%, and `registry` is at 100% lines. The
+uncovered remainder is dominated by branches that are deliberately not
+chased with contrived tests: OS-specific signal fallbacks, the impatient
+second-signal exit (130), fatal-exit mapping, and SDK connection-failure
+error paths. Re-measure with `cargo llvm-cov --workspace --summary-only`.
 
 ## Conventions
 
