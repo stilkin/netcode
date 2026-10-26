@@ -5,9 +5,9 @@
 - [x] 1.2 Split `hub` into lib + thin bin (`src/lib.rs` re-exports config/run; `main.rs` parses args); existing tests green untouched.
 
 ## 2. backplane — framing and codecs *(backplane: Backplane framing)*
-- [ ] 2.1 Frame codec: length-prefixed read/write over tokio TCP halves, 256 KiB cap, unknown-opcode error; opcode enum v1 per design table.
-- [ ] 2.2 Hand-rolled body codecs for every opcode (strings u16-length-prefixed); `docs/backplane-format.md` byte tables + rules.
-- [ ] 2.3 Unit tests: round-trip every opcode, cap rejection, string edge cases (empty, non-ASCII).
+- [x] 2.1 Frame codec: length-prefixed read/write over tokio TCP halves, 256 KiB cap, unknown-opcode error; opcode enum v1 per design table.
+- [x] 2.2 Hand-rolled body codecs for every opcode (strings u16-length-prefixed); `docs/backplane-format.md` byte tables + rules.
+- [x] 2.3 Unit tests: round-trip every opcode, cap rejection, string edge cases (empty, non-ASCII).
 
 ## 3. hub config: backplane section *(hub-runtime: Configuration loading)*
 - [ ] 3.1 `[backplane]` table: `bind` (default `127.0.0.1:24000`), `token` (optional); nested `deny_unknown_fields`; defaults boot without file.
