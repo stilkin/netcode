@@ -12,6 +12,8 @@ path = "src/main.rs"
 clap = { workspace = true }
 hub-sdk = { path = "../hub-sdk" }
 serde_json = "1"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]

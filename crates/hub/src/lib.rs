@@ -6,8 +6,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod backplane_service;
 pub mod config;
+pub mod registry;
 pub mod signals;
+pub mod spawn;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -65,7 +68,9 @@ pub fn run(args: &Args) -> Result<(), RunError> {
         .context("failed to build tokio runtime")
         .map_err(RunError::Fatal)?;
 
-    runtime.block_on(shutdown_loop(&config));
+    runtime
+        .block_on(shutdown_loop(&config))
+        .map_err(RunError::Fatal)?;
 
     info!("netcode hub stopped");
     Ok(())
@@ -73,7 +78,7 @@ pub fn run(args: &Args) -> Result<(), RunError> {
 
 /// Runs the hub until the first shutdown signal, then drains in-flight work
 /// within [`GRACE_PERIOD`]. A second signal during the drain exits immediately.
-async fn shutdown_loop(config: &Config) {
+async fn shutdown_loop(config: &Config) -> Result<(), anyhow::Error> {
     // Handlers are installed before the startup line is logged so that a
     // signal racing the boot still produces a clean stop.
     let mut signals = Signals::install();
@@ -82,6 +87,12 @@ async fn shutdown_loop(config: &Config) {
         log_level = %config.log_level,
         "netcode hub starting"
     );
+
+    let service = backplane_service::Service::bind(&config.backplane)
+        .await
+        .context("failed to bind backplane listener")?;
+    let service_handle = service.start();
+    info!(backplane = %service_handle.local_addr(), "backplane listening");
 
     signals.first().await;
     info!(
@@ -96,9 +107,10 @@ async fn shutdown_loop(config: &Config) {
         std::process::exit(EXIT_IMPATIENT);
     });
 
-    // In-flight work drains here. Today there is none, so this completes
-    // immediately; the timeout exists to bound the drain once it does not.
-    let _ = tokio::time::timeout(GRACE_PERIOD, std::future::ready(())).await;
+    // Stop accepting work, then drain within the grace period.
+    service_handle.shutdown();
+    let _ = tokio::time::timeout(GRACE_PERIOD, service_handle.drain()).await;
+    Ok(())
 }
 
 /// Maps a [`RunError`] onto the process exit code.

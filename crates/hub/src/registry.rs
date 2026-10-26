@@ -96,9 +96,7 @@ impl Registry {
 
     fn alloc_client_id(&mut self) -> ClientId {
         let id = self.next_client_id;
-        self.next_client_id = id
-            .checked_add(1)
-            .expect("client ids are u32; exhausted");
+        self.next_client_id = id.checked_add(1).expect("client ids are u32; exhausted");
         id
     }
 
@@ -145,14 +143,18 @@ impl Registry {
 
     /// Attaches a client to an active session, enforcing capacity.
     pub fn attach(&mut self, id: SessionId, player_name: &str) -> Result<ClientId, AttachError> {
-        let entry = self.sessions.get_mut(&id).ok_or(AttachError::NotFound(id))?;
-        if entry.info.state != SessionState::Active {
-            return Err(AttachError::NotJoinable(id));
-        }
-        if entry.info.player_count >= entry.info.max_players {
-            return Err(AttachError::Full(id));
+        // Validate before allocating, so a failed attach consumes no id.
+        {
+            let entry = self.sessions.get(&id).ok_or(AttachError::NotFound(id))?;
+            if entry.info.state != SessionState::Active {
+                return Err(AttachError::NotJoinable(id));
+            }
+            if entry.info.player_count >= entry.info.max_players {
+                return Err(AttachError::Full(id));
+            }
         }
         let client_id = self.alloc_client_id();
+        let entry = self.sessions.get_mut(&id).expect("session checked above");
         entry.info.player_count += 1;
         entry.client_ids.push(client_id);
         let _ = player_name; // reserved for directory listings
@@ -186,6 +188,15 @@ impl Registry {
         entry.info.state = SessionState::Closed;
         entry.info.player_count = 0;
         Some(std::mem::take(&mut entry.client_ids))
+    }
+
+    /// Ids of the clients currently attached to an active session, in
+    /// attach order. `None` for unknown or non-active sessions.
+    pub fn client_ids(&self, id: SessionId) -> Option<&[ClientId]> {
+        self.sessions
+            .get(&id)
+            .filter(|entry| entry.info.state == SessionState::Active)
+            .map(|entry| entry.client_ids.as_slice())
     }
 
     /// Metadata for one session in any state.
@@ -269,7 +280,9 @@ mod tests {
         let id = registry.create_pending(&spec());
         assert_eq!(registry.attach(id, "p1"), Err(AttachError::NotJoinable(id)));
         registry.activate(id).expect("activate");
-        registry.attach(id, "p1").expect("joinable after activation");
+        registry
+            .attach(id, "p1")
+            .expect("joinable after activation");
     }
 
     /// (session-registry: Session lifecycle)

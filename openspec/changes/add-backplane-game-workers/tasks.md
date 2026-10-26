@@ -27,12 +27,12 @@
 - [ ] 6.2 Test: spawned `sample-worker --exit-immediately` produces pending → closed, id not reused.
 
 ## 7. hub-sdk: the worker contract *(hub-sdk: all requirements)*
-- [ ] 7.1 `GameSession` trait (`on_attach`, `on_detach`, `tick`) + `SessionCtx` (`to_client`, `to_many`, `broadcast`); `SessionConfig` (tick_hz) parse from JSON argv.
-- [ ] 7.2 Runtime: connect → `Hello` → `Register` (claim or fresh) → input buffering → tick loop at `tick_hz` → heartbeats on its own schedule → clean return on hub loss.
-- [ ] 7.3 Test against an in-process stub hub TCP server: register observed, idle worker heartbeats past liveness, hub drop ⇒ run returns.
+- [x] 7.1 `GameSession` trait (`on_attach`, `on_detach`, `tick`) + `SessionCtx` (`to_client`, `to_many`, `broadcast`); `SessionConfig` (tick_hz) parse from JSON argv.
+- [x] 7.2 Runtime: connect → `Hello` → `Register` (claim or fresh) → input buffering → tick loop at `tick_hz` → heartbeats on its own schedule → clean return on hub loss.
+- [x] 7.3 Test against an in-process stub hub TCP server: register observed, idle worker heartbeats past liveness, hub drop ⇒ run returns.
 
 ## 8. sample-worker: the fixture game *(hub-sdk: Game session runtime, Output helpers)*
-- [ ] 8.1 Echo arena: on attach assigns player slot and greets; per tick echoes each client's input back via `to_client` and broadcasts a tick counter snapshot; `--exit-immediately` flag for the watchdog test.
+- [x] 8.1 Echo arena: on attach assigns player slot and greets; per tick echoes each client's input back via `to_client` and broadcasts a tick counter snapshot; `--exit-immediately` flag for the watchdog test.
 
 ## 9. End-to-end: hub + spawned worker *(backplane: full loop; session-registry: lifecycle)*
 - [ ] 9.1 `crates/sample-worker/tests/backplane_end_to_end.rs`: in-process hub + spawned `sample-worker`; assert pending → active; attach 2 clients; inputs delivered in order; per-client echoes + shared broadcast each exactly once; detach decrements; kill child ⇒ session closed, clients detached, id not reused.
