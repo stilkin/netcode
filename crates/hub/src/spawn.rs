@@ -40,6 +40,8 @@ impl ServiceHandle {
             .arg(self.token())
             .arg("--session-config")
             .arg(&req.session_config_json)
+            .arg("--session-id")
+            .arg(session_id.to_string())
             .args(&req.extra_args)
             .kill_on_drop(false);
 

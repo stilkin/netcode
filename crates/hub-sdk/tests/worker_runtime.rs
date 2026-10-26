@@ -6,11 +6,13 @@ use std::time::Duration;
 use hub_sdk::{CHANNEL_STATE, ClientInput, GameInfo, GameSession, SessionCtx, WorkerConfig, run};
 use protocol::Header;
 
+type Inputs = Arc<Mutex<Vec<(u32, Vec<u8>)>>>;
+
 #[derive(Default, Clone)]
 struct Recording {
     attaches: Arc<Mutex<Vec<u32>>>,
     detaches: Arc<Mutex<Vec<u32>>>,
-    inputs: Arc<Mutex<Vec<(u32, Vec<u8>)>>>,
+    inputs: Inputs,
     ticks: Arc<Mutex<Vec<u32>>>,
 }
 
@@ -176,9 +178,8 @@ async fn worker_runtime_full_loop() {
                 .await
                 .expect("worker output arrives")
                 .expect("worker output parses");
-        match frame {
-            backplane::Frame::Heartbeat => heartbeats += 1,
-            _ => {}
+        if frame == backplane::Frame::Heartbeat {
+            heartbeats += 1;
         }
         if heartbeats >= 1 {
             break;

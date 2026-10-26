@@ -18,13 +18,13 @@
 - [x] 4.2 Unit tests: distinct concurrent ids, player-count tracking, full-session refusal, pending not joinable, idempotent close, id non-reuse.
 
 ## 5. hub: backplane service *(backplane: Authentication, registration, notifications, delivery, fan-out, liveness, closure)*
-- [ ] 5.1 Accept loop + auth (token compare, `Hello`-first enforcement) + registration/claim paths incl. pending-entry timeout.
-- [ ] 5.2 Per-connection pump: heartbeat/liveness tracking, `ClientAttached/Detached` delivery, `FromClient` routing into worker input path, `ToClient`/`ToMany`/`Broadcast` fan-out into client queues (stale unicast dropped silently), close-on-disconnect cleanup.
-- [ ] 5.3 Integration tests over real 127.0.0.1 sockets with scripted fake workers: wrong token rejected; self-registration; silent worker reaped; broadcast fan-out; stale unicast dropped; disconnect closes session.
+- [x] 5.1 Accept loop + auth (token compare, `Hello`-first enforcement) + registration/claim paths incl. pending-entry timeout.
+- [x] 5.2 Per-connection pump: heartbeat/liveness tracking, `ClientAttached/Detached` delivery, `FromClient` routing into worker input path, `ToClient`/`ToMany`/`Broadcast` fan-out into client queues (stale unicast dropped silently), close-on-disconnect cleanup.
+- [x] 5.3 Integration tests over real 127.0.0.1 sockets with scripted fake workers: wrong token rejected; self-registration; silent worker reaped; broadcast fan-out; stale unicast dropped; disconnect closes session.
 
 ## 6. hub: worker spawn + watchdog *(backplane: Session closure on worker loss)*
-- [ ] 6.1 Spawn API: build argv (`--backplane`, `--token`, `--session-config` JSON), pre-create pending session, supervise child; child exit ⇒ registry close.
-- [ ] 6.2 Test: spawned `sample-worker --exit-immediately` produces pending → closed, id not reused.
+- [x] 6.1 Spawn API: build argv (`--backplane`, `--token`, `--session-config` JSON), pre-create pending session, supervise child; child exit ⇒ registry close.
+- [x] 6.2 Test: spawned `sample-worker --exit-immediately` produces pending → closed, id not reused.
 
 ## 7. hub-sdk: the worker contract *(hub-sdk: all requirements)*
 - [x] 7.1 `GameSession` trait (`on_attach`, `on_detach`, `tick`) + `SessionCtx` (`to_client`, `to_many`, `broadcast`); `SessionConfig` (tick_hz) parse from JSON argv.
@@ -35,8 +35,8 @@
 - [x] 8.1 Echo arena: on attach assigns player slot and greets; per tick echoes each client's input back via `to_client` and broadcasts a tick counter snapshot; `--exit-immediately` flag for the watchdog test.
 
 ## 9. End-to-end: hub + spawned worker *(backplane: full loop; session-registry: lifecycle)*
-- [ ] 9.1 `crates/sample-worker/tests/backplane_end_to_end.rs`: in-process hub + spawned `sample-worker`; assert pending → active; attach 2 clients; inputs delivered in order; per-client echoes + shared broadcast each exactly once; detach decrements; kill child ⇒ session closed, clients detached, id not reused.
+- [x] 9.1 `crates/sample-worker/tests/backplane_end_to_end.rs`: in-process hub + spawned `sample-worker`; assert pending → active; attach 2 clients; inputs delivered in order; per-client echoes + shared broadcast each exactly once; detach decrements; kill child ⇒ session closed, clients detached, id not reused.
 
 ## 10. Wrap-up
-- [ ] 10.1 `openspec validate add-backplane-game-workers --strict` green; full workspace gate (fmt, clippy -D warnings, tests) green.
-- [ ] 10.2 Mark change implemented in README roadmap + `docs/roadmap.md`; `openspec archive add-backplane-game-workers --yes`.
+- [x] 10.1 `openspec validate add-backplane-game-workers --strict` green; full workspace gate (fmt, clippy -D warnings, tests) green.
+- [x] 10.2 Mark change implemented in README roadmap + `docs/roadmap.md`; `openspec archive add-backplane-game-workers --yes`.

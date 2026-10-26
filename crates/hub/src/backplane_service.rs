@@ -221,6 +221,11 @@ pub struct Service {
 }
 
 impl Service {
+    /// The bound address workers will connect to.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
     /// Binds the backplane listener with production timeouts.
     pub async fn bind(cfg: &BackplaneConfig) -> std::io::Result<Service> {
         Self::bind_with_timeouts(cfg, Timeouts::default()).await

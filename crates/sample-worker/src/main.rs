@@ -23,6 +23,9 @@ struct Args {
     /// Session configuration as JSON, e.g. '{"tick_hz":30}'.
     #[arg(long, default_value = "{}")]
     session_config: String,
+    /// Pending session id to claim (set by the hub when it spawns us).
+    #[arg(long)]
+    session_id: Option<u32>,
     /// Test hook: exit 0 immediately (exercises the hub watchdog).
     #[arg(long)]
     exit_immediately: bool,
@@ -85,7 +88,7 @@ fn main() {
         let config = WorkerConfig {
             backplane_addr: args.backplane,
             token: args.token,
-            claim: None,
+            claim: args.session_id,
             info: GameInfo {
                 game_type: "echo-arena".to_owned(),
                 display_name: "Echo Arena".to_owned(),
