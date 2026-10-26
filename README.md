@@ -6,19 +6,22 @@ per-session game-worker processes, one process per running lobby. Adding a new
 game means dropping a new worker binary on the box; the hub itself is never
 rebuilt for new games.
 
-> **Status:** foundation implemented (wire protocol + runtime shell).
-> Browser transports and the first playable sessions land in the next roadmap
-> changes — see [docs/roadmap.md](docs/roadmap.md).
+> **Status:** roadmap changes 1–2 implemented — the wire protocol, the hub
+> runtime, and the worker backplane with a game SDK and a sample game (43
+> tests, Windows + Ubuntu CI). Browser transports land in change 3; see
+> [docs/roadmap.md](docs/roadmap.md).
 
 ## What is the project?
 
 The hub is the single long-running service of a LAN party's game infrastructure:
 
-- it terminates all client connections (desktop browsers over WebTransport) and
-  routes packets **opaquely, by header only** — it never parses game payloads;
+- it terminates all client connections (desktop browsers over WebTransport —
+  landing in roadmap change 3) and routes packets **opaquely, by header only**
+  — it never parses game payloads;
 - it hosts many concurrent sessions (lobbies) of many different game types,
-  each simulated by a separate game-worker process;
-- it exposes a lobby/admin HTTP API so browsers can discover and join sessions.
+  each simulated by a separate game-worker process on the same machine;
+- it exposes a lobby/admin HTTP API so browsers can discover and join sessions
+  (roadmap change 4).
 
 Game logic lives exclusively in game workers; game decisions are made
 server-side. Clients stay dumb: connect, send inputs, interpolate snapshots,
@@ -36,6 +39,8 @@ pluggable — is in [docs/architecture.md](docs/architecture.md).
 | Logging | [tracing](https://docs.rs/tracing) + tracing-subscriber (`RUST_LOG`) |
 | Errors | [thiserror](https://docs.rs/thiserror) (libraries), [anyhow](https://docs.rs/anyhow) (binary) |
 | Wire codec | hand-rolled, zero-dependency ([spec](crates/protocol/docs/wire-format.md)) |
+| Backplane codec | hand-rolled, zero-dependency ([spec](crates/backplane/docs/backplane-format.md)) |
+| Game SDK | `hub-sdk`: implement `GameSession`, the SDK does all networking |
 | CI | GitHub Actions — fmt, clippy `-D warnings`, tests on Ubuntu **and** Windows |
 | Process | [OpenSpec](https://openspec.dev) spec-driven development ([docs/development.md](docs/development.md)) |
 
@@ -75,6 +80,10 @@ default; override with `--config`). A missing file means all defaults.
 ```toml
 # hub.toml — all keys optional
 log_level = "info"   # trace | debug | info | warn | error
+
+[backplane]
+bind = "127.0.0.1:24000"   # loopback by design: trusted control plane
+token = ""                 # shared token workers must present; empty = off
 ```
 
 The `RUST_LOG` environment variable always overrides `log_level`.
@@ -94,9 +103,19 @@ cargo run -p hub -- --config /etc/hub.toml
 hub --version                       # → hub 0.1.0
 ```
 
-Today the binary is the verified runtime shell: it loads config, logs a startup
-line (`netcode hub starting`), and idles until Ctrl-C/SIGTERM for a clean stop.
-Network transports arrive with roadmap change 3.
+The hub binds its backplane listener (`netcode hub starting`, then
+`backplane listening <addr>`) and accepts worker registrations until
+Ctrl-C/SIGTERM for a clean stop. See it end to end:
+
+```sh
+# terminal 1: the hub
+cargo run -p hub
+# terminal 2: a sample game session
+cargo run -p sample-worker -- --backplane 127.0.0.1:24000
+# the hub log now shows: worker registered (session = 1)
+```
+
+Browser-facing network transports arrive with roadmap change 3.
 
 ## REST API and database
 
@@ -113,7 +132,8 @@ Network transports arrive with roadmap change 3.
 | [docs/architecture.md](docs/architecture.md) | system design, components, design invariants |
 | [docs/roadmap.md](docs/roadmap.md) | planned changes, statuses, out-of-scope list |
 | [docs/development.md](docs/development.md) | spec-driven workflow, repo conventions, local checks |
-| [crates/protocol/docs/wire-format.md](crates/protocol/docs/wire-format.md) | the packet header byte layout (protocol v1) |
+| [crates/protocol/docs/wire-format.md](crates/protocol/docs/wire-format.md) | client-packet header byte layout (protocol v1) |
+| [crates/backplane/docs/backplane-format.md](crates/backplane/docs/backplane-format.md) | hub-to-worker frame layout (backplane v1) |
 | [openspec/specs/](openspec/specs/) | behavioral specs — the source of truth per capability |
 
 ## Contributing / development

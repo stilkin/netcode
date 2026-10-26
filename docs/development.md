@@ -5,9 +5,14 @@
 ```
 Cargo.toml               workspace manifest (members in crates/)
 crates/
-  protocol/              wire header codec + golden vectors + format doc
+  protocol/              client-packet header codec + golden vectors
     docs/wire-format.md  the protocol v1 byte layout
-  hub/                   the `hub` binary (config, logging, shutdown)
+  backplane/             hub-to-worker frame codec
+    docs/backplane-format.md  the backplane v1 byte layout
+  hub/                   the `hub` binary + library (config, registry,
+                         backplane service, worker spawn/watchdog)
+  hub-sdk/               the game-side contract: GameSession trait + runtime
+  sample-worker/         echo arena — reference game + test fixture
 docs/                    project documentation (you are here)
 openspec/
   specs/<capability>/    current behavior — source of truth
