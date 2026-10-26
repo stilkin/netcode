@@ -1,0 +1,10 @@
+[package]
+name = "backplane"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+protocol = { path = "../protocol" }
+thiserror = { workspace = true }
+tokio = { workspace = true }
