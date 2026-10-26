@@ -69,13 +69,6 @@ fn main() {
     if args.exit_immediately {
         std::process::exit(0);
     }
-    if let Some(secs) = args.exit_after {
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs_f32(secs)).await;
-            std::process::exit(0);
-        });
-    }
-
     let session_config: SessionConfig =
         serde_json::from_str(&args.session_config).expect("valid --session-config JSON");
 
@@ -85,6 +78,13 @@ fn main() {
         .expect("tokio runtime");
 
     runtime.block_on(async move {
+        // Test hook: a scheduled clean exit (must run inside the runtime).
+        if let Some(secs) = args.exit_after {
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs_f32(secs)).await;
+                std::process::exit(0);
+            });
+        }
         let config = WorkerConfig {
             backplane_addr: args.backplane,
             token: args.token,
