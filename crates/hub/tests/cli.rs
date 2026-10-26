@@ -1,8 +1,11 @@
 //! End-to-end checks of the hub binary shell: version reporting, startup
 //! logging, and graceful shutdown.
 
+#[cfg(unix)]
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(unix)]
+use std::process::Stdio;
 
 fn hub() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_hub"));

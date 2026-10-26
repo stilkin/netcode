@@ -32,8 +32,8 @@ client socket.
    connect, send normalized inputs, interpolate snapshots, render. On a LAN
    (< 5 ms RTT) there is no client prediction, no reconciliation — and it still
    feels instant. Dumb clients are cheap to write in any technology.
-3. **Pure-Rust dependencies only.** Windows and Ubuntu must build identically
-   with one toolchain and one CI matrix; no C/C++ build deps.
+3. **Pure-Rust dependencies only.** Windows and Ubuntu build identically
+   from one toolchain; no C/C++ build deps.
 4. **Small surface.** The smallest crate set that works; no speculative layers.
    Crates appear when their roadmap change needs them.
 

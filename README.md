@@ -41,7 +41,7 @@ pluggable — is in [docs/architecture.md](docs/architecture.md).
 | Wire codec | hand-rolled, zero-dependency ([spec](crates/protocol/docs/wire-format.md)) |
 | Backplane codec | hand-rolled, zero-dependency ([spec](crates/backplane/docs/backplane-format.md)) |
 | Game SDK | `hub-sdk`: implement `GameSession`, the SDK does all networking |
-| CI | GitHub Actions — fmt, clippy `-D warnings`, tests on Ubuntu **and** Windows |
+| Commit gates | version-controlled pre-commit hook — fmt, clippy `-D warnings`, tests before every commit |
 | Process | [OpenSpec](https://openspec.dev) spec-driven development ([docs/development.md](docs/development.md)) |
 
 **Policy:** pure-Rust dependencies only — no C/C++ build deps — so Windows and
@@ -140,8 +140,8 @@ Browser-facing network transports arrive with roadmap change 3.
 
 ```sh
 cargo test --workspace                              # all tests
-cargo fmt --all -- --check                          # CI: formatting
-cargo clippy --workspace --all-targets -- -D warnings  # CI: lints
+cargo fmt --all -- --check                          # gate: formatting
+cargo clippy --workspace --all-targets -- -D warnings  # gate: lints
 ```
 
 A version-controlled pre-commit hook (`.githooks/pre-commit`) runs the same

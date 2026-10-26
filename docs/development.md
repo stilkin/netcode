@@ -17,7 +17,6 @@ docs/                    project documentation (you are here)
 openspec/
   specs/<capability>/    current behavior — source of truth
   changes/               active change proposals + archive of applied ones
-.github/workflows/ci.yml CI: fmt + clippy -D warnings + tests, Ubuntu & Windows
 ```
 
 ## Toolchain
@@ -46,7 +45,9 @@ Conventions enforced by `openspec/config.yaml`:
 - every task traces to a requirement;
 - design decisions record the alternatives considered.
 
-## Checks (same gates as CI)
+## Checks
+
+The same three gates run in the pre-commit hook and by hand:
 
 ```sh
 cargo fmt --all -- --check                          # formatting
@@ -54,8 +55,10 @@ cargo clippy --workspace --all-targets -- -D warnings  # lints
 cargo test --workspace                              # unit + golden + integration
 ```
 
-CI runs the same three on `ubuntu-latest` and `windows-latest`; a change is
-mergeable only when the matrix is green.
+There is no hosted CI by owner decision — the hook is the enforcement point.
+Windows is not exercised automatically: if you touch platform-specific code,
+build on a Windows machine before merging (`cfg(unix)` code is confined to
+signal handling and gated tests, which keeps the surface small).
 
 ## Git hooks
 
@@ -85,9 +88,9 @@ the second-signal exit (130), and the fatal-exit (2) mapping.
 
 ## Conventions
 
-- **Pure-Rust dependencies only** (no C/C++ build deps) — this is what keeps
-  the two-platform CI matrix honest. `libc` (bindings crate) is allowed as a
-  dev-dependency where a test needs a raw signal.
+- **Pure-Rust dependencies only** (no C/C++ build deps) — cross-platform
+  builds stay trivial. `libc` (bindings crate) is allowed as a dev-dependency
+  where a test needs a raw signal.
 - **Golden vectors** (`crates/protocol/tests/golden.rs`) pin the wire format.
   Never regenerate them casually; changing one is a protocol-evolution decision
   recorded in the change's design doc.

@@ -7,14 +7,20 @@ are enforced continuously rather than aspirationally.
 
 ## Requirements
 
-### Requirement: Cross-platform CI gate
+### Requirement: Local commit gates
 
-Every push and pull request MUST run, on both Ubuntu and Windows runners:
-`cargo fmt --check`, `cargo clippy --all-targets` with warnings denied, and
-`cargo test`. A change SHALL be mergeable only when the matrix is green on both
-platforms.
+Every commit MUST pass `cargo fmt --check`, `cargo clippy --all-targets` with
+warnings denied, and `cargo test --workspace` through the version-controlled
+pre-commit hook at `.githooks/pre-commit`, activated per clone with
+`git config core.hooksPath .githooks`. The hook MUST remain bypassable with
+`git commit --no-verify` for work-in-progress commits.
 
-#### Scenario: Windows-only regression
+#### Scenario: Hook blocks a failing commit
 
-- **WHEN** a commit compiles and passes tests on Linux but fails on Windows
-- **THEN** CI fails on the Windows leg and the commit cannot merge
+- **WHEN** a commit is attempted with changes that fail any gate
+- **THEN** the pre-commit hook rejects the commit and names the failing gate
+
+#### Scenario: Work-in-progress bypass
+
+- **WHEN** a commit is made with `--no-verify`
+- **THEN** the commit succeeds without running the gates
