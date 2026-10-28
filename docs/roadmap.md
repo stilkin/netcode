@@ -9,7 +9,7 @@ green. See [development.md](development.md) for the workflow.
 |---|--------|--------|-------|--------------|
 | 1 | `add-hub-foundation` | ✅ implemented (2026-10-25) | Cargo workspace; wire header v1 codec pinned by golden vectors; hub binary shell (config, logging, graceful shutdown); CI matrix Ubuntu+Windows | `wire-protocol`, `hub-runtime`, `build-pipeline` |
 | 2 | `add-backplane-game-workers` | ✅ implemented (2026-10-26) | Loopback-TCP backplane (register/attach/route/broadcast/heartbeat); `hub-sdk` with `GameSession` trait; session registry + process watchdog; sample worker; end-to-end test | `backplane`, `session-registry`, `hub-sdk` |
-| 3 | `add-webtransport-client-edge` | ⬜ pending | WebTransport endpoint (self-signed cert + served hash), connect-token handshake, channel mapping (state→datagrams, events→stream), relay routing with backpressure | `client-edge`, `client-protocol` |
+| 3 | `add-webtransport-client-edge` | ✅ implemented (2026-10-28) | WebTransport endpoint (self-signed cert + served hash), connect-token handshake, channel mapping (state→datagrams, events→stream), relay routing with backpressure | `client-edge`, `client-protocol` |
 | 4 | `add-lobby-admin-api` | ⬜ pending | HTTP JSON API: list games/sessions, create/close session, kick client; session metadata for directory UIs. An OpenAPI 3 file (`docs/rest_api.yaml`) ships with it | `lobby-api` |
 | 5 | `add-conformance-bots` | ⬜ pending | Headless bot client, deterministic scripted-run stream fixtures, load smoke profile (N bots × M sessions) | `conformance` |
 

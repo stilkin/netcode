@@ -19,3 +19,4 @@ tokio = { workspace = true }
 [dev-dependencies]
 hub = { path = "../hub" }
 protocol = { path = "../protocol" }
+wtransport = { workspace = true }

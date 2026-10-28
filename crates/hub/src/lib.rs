@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod backplane_service;
+pub mod client_edge;
 pub mod config;
 pub mod registry;
 pub mod signals;
@@ -94,6 +95,13 @@ async fn shutdown_loop(config: &Config) -> Result<(), anyhow::Error> {
     let service_handle = service.start();
     info!(backplane = %service_handle.local_addr(), "backplane listening");
 
+    // The client edge routes browser traffic onto the backplane's attach
+    // seam; a bind failure (port taken) is fatal, like the backplane's.
+    let edge = client_edge::Service::bind(&config.client_edge, service_handle.clone())
+        .await
+        .context("failed to bind client edge")?;
+    let edge_handle = edge.start();
+
     signals.first().await;
     info!(
         grace_secs = GRACE_PERIOD.as_secs(),
@@ -107,7 +115,11 @@ async fn shutdown_loop(config: &Config) -> Result<(), anyhow::Error> {
         std::process::exit(EXIT_IMPATIENT);
     });
 
-    // Stop accepting work, then drain within the grace period.
+    // Stop accepting work, then drain within the grace period. Client
+    // connections close first; workers see their clients leave, then the
+    // backplane itself drains.
+    edge_handle.shutdown();
+    let _ = tokio::time::timeout(GRACE_PERIOD, edge_handle.drain()).await;
     service_handle.shutdown();
     let _ = tokio::time::timeout(GRACE_PERIOD, service_handle.drain()).await;
     Ok(())

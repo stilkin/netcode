@@ -71,6 +71,13 @@ impl ClientHandle {
             packet,
         });
     }
+
+    /// Packets queued for the relay to send, not yet drained. A client whose
+    /// worker keeps sending while its transport stalls grows this without
+    /// bound; relays close connections past their watermark.
+    pub fn backlog(&self) -> usize {
+        self.rx.len()
+    }
 }
 
 impl Drop for ClientHandle {
@@ -401,6 +408,27 @@ async fn handle_connection(
     info!(%peer, session = session_id, "worker link established");
 
     // --- link pump: worker frames in, hub frames out, liveness enforced ---
+    // The reader runs as its own task: `conn::read_frame` spans two reads
+    // (length, body) and is therefore *not* cancel-safe, so it must never sit
+    // inside a `select!` arm — an outbound write winning mid-body would drop
+    // the length bytes and desynchronize the stream.
+    let (frames_tx, mut frames_rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        loop {
+            match conn::read_frame(&mut rd).await {
+                Ok(frame) => {
+                    if frames_tx.send(Ok(frame)).is_err() {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    let _ = frames_tx.send(Err(err));
+                    break;
+                }
+            }
+        }
+    });
+
     let mut last_seen = Instant::now();
     loop {
         let liveness = tokio::time::sleep_until(tokio::time::Instant::from_std(
@@ -412,8 +440,8 @@ async fn handle_connection(
                 let _ = cmd.send(Command::WorkerLost { session_id });
                 return;
             }
-            read = conn::read_frame(&mut rd) => match read {
-                Ok(frame) => {
+            msg = frames_rx.recv() => match msg {
+                Some(Ok(frame)) => {
                     last_seen = Instant::now();
                     match frame {
                         Frame::Heartbeat => {}
@@ -424,14 +452,16 @@ async fn handle_connection(
                         }
                     }
                 }
-                Err(err) => {
+                Some(Err(err)) => {
                     info!(%peer, session = session_id, err = %err, "worker connection closed");
                     let _ = cmd.send(Command::WorkerLost { session_id });
                     return;
                 }
+                None => return,
             },
             out = outbound_rx.recv() => match out {
                 Some(frame) => {
+                    tracing::debug!(session = session_id, frame = ?frame.opcode(), "pump: outbound frame");
                     if conn::write_frame(&mut wr, &frame).await.is_err() {
                         let _ = cmd.send(Command::WorkerLost { session_id });
                         return;

@@ -23,12 +23,24 @@ fn version_flag() {
     assert_eq!(stdout.trim(), format!("hub {}", env!("CARGO_PKG_VERSION")));
 }
 
-/// Boot, observe the startup log line, then SIGINT: exit 0.
-/// (Configuration loading, Structured logging, Graceful shutdown)
+/// Boot, observe the startup log lines, then SIGINT: exit 0.
+/// (Configuration loading, Structured logging, Graceful shutdown;
+/// hub-runtime: Client edge startup — boot and log lines)
 #[cfg(unix)]
 #[test]
 fn boots_logs_and_shuts_down_cleanly() {
+    // Pin the client edge to ephemeral ports so the test never collides
+    // with a developer's machine occupying the defaults (4433/8080).
+    let dir = std::env::temp_dir().join(format!("hub-cli-boot-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("hub.toml"),
+        "[backplane]\nbind = \"127.0.0.1:0\"\n[client_edge]\nbind = \"127.0.0.1:0\"\nbootstrap_bind = \"127.0.0.1:0\"\n",
+    )
+    .expect("write config");
+
     let mut child = hub()
+        .current_dir(&dir)
         .stdout(Stdio::piped())
         .spawn()
         .expect("spawn hub with piped stdout");
@@ -36,14 +48,21 @@ fn boots_logs_and_shuts_down_cleanly() {
     let mut lines = BufReader::new(stdout).lines();
 
     let mut saw_startup = false;
+    let mut saw_edge = false;
     for line in lines.by_ref() {
         let line = line.expect("read stdout line");
         if line.contains("netcode hub starting") {
             saw_startup = true;
+        }
+        if line.contains("client edge listening") {
+            saw_edge = true;
+        }
+        if saw_startup && saw_edge {
             break;
         }
     }
     assert!(saw_startup, "startup log line was not observed");
+    assert!(saw_edge, "client edge log line was not observed");
 
     // Graceful stop: the first signal must lead to a clean exit.
     unsafe {

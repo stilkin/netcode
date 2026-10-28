@@ -87,7 +87,6 @@ docs/                  architecture · roadmap · development
   the message names the change/tasks it implements.
 - A crate appears in the workspace when its roadmap change needs it — a crate
   skeleton ahead of need is a design smell here.
-- Status (2026-10): changes 1–2 implemented (wire protocol, hub runtime,
-  backplane + SDK + sample worker). Browser transports (change 3) and the
-  lobby/admin HTTP API (change 4) are pending — the hub has no client-facing
-  transport yet.
+- Status (2026-10): changes 1–3 implemented (wire protocol, hub runtime,
+  backplane + SDK + sample worker, WebTransport client edge). The lobby/admin
+  HTTP API (change 4) and conformance bots (change 5) are pending.

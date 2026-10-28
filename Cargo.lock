@@ -1096,6 +1096,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wtransport",
 ]
 
 [[package]]

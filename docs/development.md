@@ -10,7 +10,8 @@ crates/
   backplane/             hub-to-worker frame codec
     docs/backplane-format.md  the backplane v1 byte layout
   hub/                   the `hub` binary + library (config, registry,
-                         backplane service, worker spawn/watchdog)
+                         backplane service, worker spawn/watchdog,
+                         client_edge: WebTransport listener + bootstrap)
   hub-sdk/               the game-side contract: GameSession trait + runtime
   sample-worker/         echo arena — reference game + test fixture
 docs/                    project documentation (you are here)
@@ -81,18 +82,22 @@ cargo install cargo-llvm-cov            # once; also: rustup component add llvm-
 cargo llvm-cov --workspace --summary-only   # add --html for a browsable report
 ```
 
-Current state: ~91% line coverage overall; `crates/protocol` — the
-interop contract — is at 100%, and `registry` is at 100% lines. The
-uncovered remainder is dominated by branches that are deliberately not
-chased with contrived tests: OS-specific signal fallbacks, the impatient
-second-signal exit (130), fatal-exit mapping, and SDK connection-failure
-error paths. Re-measure with `cargo llvm-cov --workspace --summary-only`.
+Current state (post-change-3): ~92% line coverage overall; `crates/protocol`
+is at ~97% (the header codec itself at 100% lines), `registry` at 100% lines,
+and the new `client_edge` module at ~91%. The uncovered remainder is dominated
+by branches deliberately not chased with contrived tests: OS-specific signal
+fallbacks, the impatient second-signal exit (130), fatal-exit mapping, SDK
+connection-failure error paths, and join-frame decode error arms. Re-measure
+with `cargo llvm-cov --workspace --summary-only`.
 
 ## Conventions
 
 - **Pure-Rust dependencies only** (no C/C++ build deps) — cross-platform
-  builds stay trivial. `libc` (bindings crate) is allowed as a dev-dependency
-  where a test needs a raw signal.
+  builds stay trivial. One documented exception (change 3): the WebTransport
+  transport tree (`wtransport` → quinn → rustls → `ring`), confined to the
+  client edge; users receive prebuilt artifacts and never compile it.
+  `libc` (bindings crate) is allowed as a dev-dependency where a test needs
+  a raw signal.
 - **Golden vectors** (`crates/protocol/tests/golden.rs`) pin the wire format.
   Never regenerate them casually; changing one is a protocol-evolution decision
   recorded in the change's design doc.

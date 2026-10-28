@@ -6,10 +6,10 @@ per-session game-worker processes, one process per running lobby. Adding a new
 game means dropping a new worker binary on the box; the hub itself is never
 rebuilt for new games.
 
-> **Status:** roadmap changes 1–2 implemented — the wire protocol, the hub
-> runtime, and the worker backplane with a game SDK and a sample game (43
-> tests, Windows + Ubuntu CI). Browser transports land in change 3; see
-> [docs/roadmap.md](docs/roadmap.md).
+> **Status:** roadmap changes 1–3 implemented — the wire protocol, the hub
+> runtime, the worker backplane with a game SDK and a sample game, and the
+> WebTransport client edge (69 tests, local pre-commit gates). The lobby/admin
+> HTTP API lands in change 4; see [docs/roadmap.md](docs/roadmap.md).
 
 ## What is the project?
 
@@ -40,13 +40,16 @@ pluggable — is in [docs/architecture.md](docs/architecture.md).
 | Errors | [thiserror](https://docs.rs/thiserror) (libraries), [anyhow](https://docs.rs/anyhow) (binary) |
 | Wire codec | hand-rolled, zero-dependency ([spec](crates/protocol/docs/wire-format.md)) |
 | Backplane codec | hand-rolled, zero-dependency ([spec](crates/backplane/docs/backplane-format.md)) |
+| Client transport | [WebTransport](https://docs.rs/wtransport) over QUIC + [rcgen](https://docs.rs/rcgen) self-signed certs (see policy note) |
 | Game SDK | `hub-sdk`: implement `GameSession`, the SDK does all networking |
 | Commit gates | version-controlled pre-commit hook — fmt, clippy `-D warnings`, tests before every commit |
 | Process | [OpenSpec](https://openspec.dev) spec-driven development ([docs/development.md](docs/development.md)) |
 
-**Policy:** pure-Rust dependencies only — no C/C++ build deps — so Windows and
-Ubuntu build identically with one toolchain. WebTransport ([wtransport](https://docs.rs/wtransport))
-and the HTTP layer are planned, not yet integrated (roadmap changes 3–4).
+**Policy:** pure-Rust dependencies only — no C/C++ build deps — so Windows
+and Ubuntu build identically with one toolchain, with **one documented
+exception**: the WebTransport transport tree (`wtransport` → quinn → rustls
+→ `ring`), confined to the client edge (change 3). Users receive prebuilt
+artifacts and never compile it. The HTTP layer is planned (roadmap change 4).
 
 ## Installation
 
@@ -84,6 +87,11 @@ log_level = "info"   # trace | debug | info | warn | error
 [backplane]
 bind = "127.0.0.1:24000"   # loopback by design: trusted control plane
 token = ""                 # shared token workers must present; empty = off
+
+[client_edge]
+bind = "0.0.0.0:4433"        # WebTransport (UDP) — LAN-facing
+bootstrap_bind = "0.0.0.0:8080"  # cert hash + test page (HTTP); change 4 absorbs it
+token = ""                   # shared token Connect frames must present; empty = open LAN
 ```
 
 The `RUST_LOG` environment variable always overrides `log_level`.
@@ -115,7 +123,9 @@ cargo run -p sample-worker -- --backplane 127.0.0.1:24000
 # the hub log now shows: worker registered (session = 1)
 ```
 
-Browser-facing network transports arrive with roadmap change 3.
+Browsers join over WebTransport: open `http://<host>:8080/` for the built-in
+test client (fetches the hub's per-boot certificate hash, joins a session,
+plays echo arena). Session ids appear in the hub log.
 
 ## REST API and database
 
