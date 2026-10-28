@@ -9,8 +9,6 @@
 //! Requirements live in the `client-edge` capability spec; the frame layouts
 //! in `crates/protocol/docs/wire-format.md`.
 
-pub mod bootstrap;
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -79,7 +77,6 @@ pub fn generate_identity() -> Result<(Cert, Identity)> {
 /// A bound client-edge service, ready to start.
 pub struct Service {
     server: Endpoint<wtransport::endpoint::endpoint_side::Server>,
-    bootstrap: tokio::net::TcpListener,
     cfg: ClientEdgeConfig,
     backplane: Backplane,
     cert: Cert,
@@ -91,10 +88,6 @@ impl Service {
     /// handle is the seam client packets route through.
     pub async fn bind(cfg: &ClientEdgeConfig, backplane: Backplane) -> Result<Self> {
         let bind: SocketAddr = cfg.bind.parse().context("parse client_edge.bind")?;
-        let bootstrap_bind: SocketAddr = cfg
-            .bootstrap_bind
-            .parse()
-            .context("parse client_edge.bootstrap_bind")?;
 
         let (cert, identity) = generate_identity()?;
 
@@ -104,13 +97,9 @@ impl Service {
             .build();
         let server = Endpoint::server(server_config)
             .with_context(|| format!("bind client edge on {bind}"))?;
-        let bootstrap = tokio::net::TcpListener::bind(bootstrap_bind)
-            .await
-            .with_context(|| format!("bind bootstrap endpoint on {bootstrap_bind}"))?;
 
         Ok(Self {
             server,
-            bootstrap,
             cfg: cfg.clone(),
             backplane,
             cert,
@@ -125,30 +114,14 @@ impl Service {
             .server
             .local_addr()
             .expect("bound server has a local address");
-        let bootstrap_addr = self.bootstrap.local_addr().expect("bound tcp listener");
 
-        let mut tasks = JoinSet::new();
-        tasks.spawn(bootstrap::serve(
-            self.bootstrap,
-            self.cert.clone(),
-            shutdown_rx.clone(),
-        ));
-
-        let join = tokio::spawn(run(
-            self.server,
-            self.cfg,
-            self.backplane,
-            shutdown_rx,
-            tasks,
-        ));
+        let join = tokio::spawn(run(self.server, self.cfg, self.backplane, shutdown_rx));
 
         info!(address = %edge_addr, "client edge listening");
-        info!(address = %bootstrap_addr, "bootstrap endpoint listening");
         info!(sha256 = %hex(&self.cert.sha256), "client edge certificate hash");
 
         ServiceHandle {
             edge_addr,
-            bootstrap_addr,
             cert: self.cert,
             shutdown: Arc::new(shutdown),
             join: Arc::new(tokio::sync::Mutex::new(Some(join))),
@@ -160,7 +133,6 @@ impl Service {
 #[derive(Clone)]
 pub struct ServiceHandle {
     edge_addr: SocketAddr,
-    bootstrap_addr: SocketAddr,
     cert: Cert,
     shutdown: Arc<watch::Sender<bool>>,
     join: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -170,11 +142,6 @@ impl ServiceHandle {
     /// The WebTransport listener's local address.
     pub fn edge_addr(&self) -> SocketAddr {
         self.edge_addr
-    }
-
-    /// The bootstrap HTTP endpoint's local address.
-    pub fn bootstrap_addr(&self) -> SocketAddr {
-        self.bootstrap_addr
     }
 
     /// The pinned certificate hash (served by the bootstrap endpoint).
@@ -203,8 +170,8 @@ async fn run(
     cfg: ClientEdgeConfig,
     backplane: Backplane,
     shutdown_rx: watch::Receiver<bool>,
-    mut tasks: JoinSet<()>,
 ) {
+    let mut tasks = JoinSet::new();
     let mut shutdown = shutdown_rx.clone();
     loop {
         tokio::select! {
@@ -229,7 +196,9 @@ async fn run(
                     }
                 }
             }
-            _ = tasks.join_next() => {}
+            // Only reap when something can finish; an empty JoinSet's
+            // join_next is immediately ready and would busy-loop.
+            _ = tasks.join_next(), if !tasks.is_empty() => {}
             _ = shutdown.changed() => break,
         }
     }

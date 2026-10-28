@@ -6,10 +6,11 @@ per-session game-worker processes, one process per running lobby. Adding a new
 game means dropping a new worker binary on the box; the hub itself is never
 rebuilt for new games.
 
-> **Status:** roadmap changes 1–3 implemented — the wire protocol, the hub
-> runtime, the worker backplane with a game SDK and a sample game, and the
-> WebTransport client edge (69 tests, local pre-commit gates). The lobby/admin
-> HTTP API lands in change 4; see [docs/roadmap.md](docs/roadmap.md).
+> **Status:** roadmap changes 1–4 implemented — the wire protocol, the hub
+> runtime, the worker backplane with a game SDK and a sample game, the
+> WebTransport client edge, and the lobby/admin HTTP API (85 tests, local
+> pre-commit gates). Conformance bots land in change 5; see
+> [docs/roadmap.md](docs/roadmap.md).
 
 ## What is the project?
 
@@ -41,6 +42,7 @@ pluggable — is in [docs/architecture.md](docs/architecture.md).
 | Wire codec | hand-rolled, zero-dependency ([spec](crates/protocol/docs/wire-format.md)) |
 | Backplane codec | hand-rolled, zero-dependency ([spec](crates/backplane/docs/backplane-format.md)) |
 | Client transport | [WebTransport](https://docs.rs/wtransport) over QUIC + [rcgen](https://docs.rs/rcgen) self-signed certs (see policy note) |
+| Lobby API | hand-rolled HTTP/1.1 + [serde_json](https://docs.rs/serde_json) — [OpenAPI](docs/rest_api.yaml) |
 | Game SDK | `hub-sdk`: implement `GameSession`, the SDK does all networking |
 | Commit gates | version-controlled pre-commit hook — fmt, clippy `-D warnings`, tests before every commit |
 | Process | [OpenSpec](https://openspec.dev) spec-driven development ([docs/development.md](docs/development.md)) |
@@ -90,8 +92,20 @@ token = ""                 # shared token workers must present; empty = off
 
 [client_edge]
 bind = "0.0.0.0:4433"        # WebTransport (UDP) — LAN-facing
-bootstrap_bind = "0.0.0.0:8080"  # cert hash + test page (HTTP); change 4 absorbs it
 token = ""                   # shared token Connect frames must present; empty = open LAN
+
+[lobby]
+bind = "0.0.0.0:8080"        # HTTP: lobby API + cert hash + test page
+token = ""                   # gates mutations; empty = open LAN
+
+# One entry per installable game: adding a game is a binary + a config entry.
+[[games]]
+game_type = "echo-arena"
+display_name = "Echo Arena"
+max_players = 8
+payload_schema_version = 1
+worker = "target/debug/sample-worker"
+session_config_json = '{"tick_hz":60}'
 ```
 
 The `RUST_LOG` environment variable always overrides `log_level`.
@@ -124,13 +138,18 @@ cargo run -p sample-worker -- --backplane 127.0.0.1:24000
 ```
 
 Browsers join over WebTransport: open `http://<host>:8080/` for the built-in
-test client (fetches the hub's per-boot certificate hash, joins a session,
-plays echo arena). Session ids appear in the hub log.
+test client — it lists the game catalog and live sessions, creates sessions
+with one click, fetches the hub's per-boot certificate hash, and plays echo
+arena. The same routes are the documented REST API
+([OpenAPI](docs/rest_api.yaml)): `GET /api/games`, `GET /api/sessions`,
+`POST /api/sessions`, `DELETE /api/sessions/{id}`,
+`DELETE /api/sessions/{id}/clients/{id}`.
 
 ## REST API and database
 
-- **REST API:** none yet. The lobby/admin HTTP API arrives with roadmap change
-  4 (`add-lobby-admin-api`); an OpenAPI 3 document (`docs/rest_api.yaml`) will be added at that time.
+- **REST API:** the lobby/admin API ([`docs/rest_api.yaml`](docs/rest_api.yaml))
+  serves the game catalog, session listing/creation/closure, and client kick,
+  plus the cert-hash and test-page routes on the `[lobby]` listener.
 - **Database:** none, by design. Session and game state live in memory in the
   game-worker processes; persistence is explicitly out of scope for now
   ([docs/roadmap.md](docs/roadmap.md)).

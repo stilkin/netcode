@@ -1,99 +1,8 @@
-//! The bootstrap endpoint: a minimal hand-rolled HTTP/1.1 responder serving
-//! the current certificate hash and a built-in test page, so a browser can
-//! pin the hub's per-boot certificate before the lobby API exists
-//! (which will absorb this endpoint in a later change).
-//!
-//! Two routes, nothing else: `GET /cert-hash` (JSON, CORS `*`) and `GET /`
-//! (test page). Any other path is 404.
+//! The built-in test page served at `GET /` — connect by cert hash, browse
+//! the lobby API, create a session, and play echo arena. A fixture for
+//! manual verification, not a product.
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
-use tracing::debug;
-
-use super::Cert;
-
-/// Largest request head we tolerate before giving up (request-line probing).
-const MAX_REQUEST_HEAD: usize = 8 * 1024;
-
-/// Serves the bootstrap endpoint until shutdown.
-pub async fn serve(listener: TcpListener, cert: Cert, mut shutdown: watch::Receiver<bool>) {
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => {
-                let Ok((stream, _peer)) = accepted else { continue };
-                tokio::spawn(serve_one(stream, cert.clone()));
-            }
-            _ = shutdown.changed() => break,
-        }
-    }
-}
-
-async fn serve_one(mut stream: TcpStream, cert: Cert) {
-    let req = match read_request_head(&mut stream).await {
-        Some(req) => req,
-        None => return,
-    };
-    let path = req.split_whitespace().nth(1).unwrap_or("");
-    let (status, content_type, extra_headers, body) = match path {
-        "/cert-hash" => {
-            let body = format!("{{\"sha256\":\"{}\"}}", hex(&cert.sha256));
-            (
-                "200 OK",
-                "application/json",
-                "Access-Control-Allow-Origin: *\r\n",
-                body,
-            )
-        }
-        "/" => (
-            "200 OK",
-            "text/html; charset=utf-8",
-            "",
-            TEST_PAGE.to_owned(),
-        ),
-        _ => (
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            "",
-            String::new(),
-        ),
-    };
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{extra_headers}Connection: close\r\n\r\n{body}",
-        body.len()
-    );
-    let _ = stream.write_all(response.as_bytes()).await;
-    let _ = stream.flush().await;
-}
-
-/// Reads until the end of the request head (`\r\n\r\n`), bounded in size.
-async fn read_request_head(stream: &mut TcpStream) -> Option<String> {
-    let mut buf = Vec::with_capacity(256);
-    let mut chunk = [0u8; 512];
-    loop {
-        let n = stream.read(&mut chunk).await.ok()?;
-        if n == 0 {
-            return None;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-            return Some(String::from_utf8_lossy(&buf).into_owned());
-        }
-        if buf.len() > MAX_REQUEST_HEAD {
-            debug!("bootstrap request head exceeded {MAX_REQUEST_HEAD} bytes");
-            return None;
-        }
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// The built-in single-file test client: fetch the cert hash, connect over
-/// WebTransport, join a session, and exercise the echo arena. Requires a
-/// browser with WebTransport + `serverCertificateHashes` (Chrome/Edge 122+).
-const TEST_PAGE: &str = r#"<!doctype html>
+pub const TEST_PAGE: &str = r#"<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <title>netcode hub test client</title>
@@ -112,10 +21,47 @@ const TEST_PAGE: &str = r#"<!doctype html>
   <label>token</label><input id="token" value="">
   <button id="join">join</button>
 </p>
-<p><button id="send" disabled>send input "hello"</button></p>
+<p><button id="send" disabled>send input "hello"</button> <button id="refresh">refresh lobby</button></p>
+<p>games: <span id="games">(loading…)</span></p>
+<p>sessions: <span id="sessions">(loading…)</span></p>
 <div id="log"></div>
 <script type="module">
 const log = (line) => { document.getElementById('log').textContent += line + '\n'; };
+const api = location.origin;
+const refreshLobby = async () => {
+  const games = await fetch(`${api}/api/games`).then(r => r.json()).catch(() => []);
+  const gamesEl = document.getElementById('games');
+  gamesEl.textContent = '';
+  for (const g of games) {
+    const btn = document.createElement('button');
+    btn.textContent = `create ${g.display_name}`;
+    btn.onclick = async () => {
+      const resp = await fetch(`${api}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game_type: g.game_type }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (resp.status === 201) {
+        log(`created session ${body.session_id} (${g.game_type})`);
+        document.getElementById('session').value = body.session_id;
+        refreshLobby();
+      } else {
+        log(`create failed: ${body.error ?? resp.status}`);
+      }
+    };
+    gamesEl.append(btn, ' ');
+  }
+  if (!games.length) gamesEl.textContent = '(no [[games]] configured)';
+
+  const sessions = await fetch(`${api}/api/sessions`).then(r => r.json()).catch(() => []);
+  const sessionsEl = document.getElementById('sessions');
+  sessionsEl.textContent = sessions.length
+    ? sessions.map((s) => `#${s.id} ${s.game_type} [${s.state}] ${s.player_count}/${s.max_players}`).join(' · ')
+    : '(none)';
+};
+document.getElementById('refresh').onclick = refreshLobby;
+refreshLobby();
 const le = (buf, off, u32) => new DataView(buf.buffer).setUint32(off, u32, true);
 
 function packet(channel, clientId, sessionId, payload) {

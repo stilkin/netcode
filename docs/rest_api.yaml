@@ -1,0 +1,136 @@
+openapi: 3.1.0
+info:
+  title: netcode hub lobby/admin API
+  description: >
+    The HTTP surface of the netcode hub: game catalog, session
+    listing/creation/closure, and client kick, plus the absorbed cert-hash
+    and test-page routes served by the same listener. Mutating operations
+    require `Authorization: Bearer <token>` when `lobby.token` is
+    configured; reads are always open.
+  version: 0.1.0
+servers:
+  - url: http://{host}:{port}
+    description: The `[lobby] bind` listener (default port 8080)
+    variables:
+      host: { default: localhost }
+      port: { default: "8080" }
+paths:
+  /cert-hash:
+    get:
+      summary: The client edge certificate's SHA-256 (for serverCertificateHashes pinning)
+      responses:
+        "200":
+          description: The live certificate hash
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sha256]
+                properties:
+                  sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+  /:
+    get:
+      summary: The built-in test page (fixture for manual verification)
+      responses:
+        "200":
+          description: HTML page
+          content:
+            text/html: {}
+  /api/games:
+    get:
+      summary: List the configured game catalog (`[[games]]` entries)
+      responses:
+        "200":
+          description: The catalog
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Game" }
+  /api/sessions:
+    get:
+      summary: List live sessions (pending and active)
+      responses:
+        "200":
+          description: The session listing
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Session" }
+    post:
+      summary: Create a session by spawning the game's worker
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [game_type]
+              properties:
+                game_type: { type: string }
+      responses:
+        "201":
+          description: Session created (pending until the worker claims it)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+  /api/sessions/{id}:
+    delete:
+      summary: Close a session (worker exits, clients detached)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204": { description: Session closed }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/sessions/{id}/clients/{clientId}:
+    delete:
+      summary: Kick a client from a session
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: clientId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204": { description: Client kicked }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Error:
+      description: A JSON error body
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    Game:
+      type: object
+      properties:
+        game_type: { type: string }
+        display_name: { type: string }
+        max_players: { type: integer }
+        payload_schema_version: { type: integer }
+    Session:
+      type: object
+      properties:
+        id: { type: integer }
+        state: { type: string, enum: [pending, active, closed] }
+        game_type: { type: string }
+        display_name: { type: string }
+        max_players: { type: integer }
+        payload_schema_version: { type: integer }
+        player_count: { type: integer }

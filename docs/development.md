@@ -11,7 +11,8 @@ crates/
     docs/backplane-format.md  the backplane v1 byte layout
   hub/                   the `hub` binary + library (config, registry,
                          backplane service, worker spawn/watchdog,
-                         client_edge: WebTransport listener + bootstrap)
+                         client_edge: WebTransport listener,
+                         lobby: HTTP API + test page ([[games]] catalog))
   hub-sdk/               the game-side contract: GameSession trait + runtime
   sample-worker/         echo arena — reference game + test fixture
 docs/                    project documentation (you are here)
@@ -82,9 +83,9 @@ cargo install cargo-llvm-cov            # once; also: rustup component add llvm-
 cargo llvm-cov --workspace --summary-only   # add --html for a browsable report
 ```
 
-Current state (post-change-3): ~92% line coverage overall; `crates/protocol`
-is at ~97% (the header codec itself at 100% lines), `registry` at 100% lines,
-and the new `client_edge` module at ~91%. The uncovered remainder is dominated
+Current state (post-change-4): ~92% line coverage overall; `crates/protocol`
+is at ~97% (the header codec itself at 100% lines), `registry` at ~99%,
+`client_edge` at ~91%, and `lobby` at ~92%. The uncovered remainder is dominated
 by branches deliberately not chased with contrived tests: OS-specific signal
 fallbacks, the impatient second-signal exit (130), fatal-exit mapping, SDK
 connection-failure error paths, and join-frame decode error arms. Re-measure

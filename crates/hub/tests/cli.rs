@@ -35,7 +35,7 @@ fn boots_logs_and_shuts_down_cleanly() {
     std::fs::create_dir_all(&dir).expect("create temp dir");
     std::fs::write(
         dir.join("hub.toml"),
-        "[backplane]\nbind = \"127.0.0.1:0\"\n[client_edge]\nbind = \"127.0.0.1:0\"\nbootstrap_bind = \"127.0.0.1:0\"\n",
+        "[backplane]\nbind = \"127.0.0.1:0\"\n[client_edge]\nbind = \"127.0.0.1:0\"\n[lobby]\nbind = \"127.0.0.1:0\"\n",
     )
     .expect("write config");
 
@@ -49,6 +49,7 @@ fn boots_logs_and_shuts_down_cleanly() {
 
     let mut saw_startup = false;
     let mut saw_edge = false;
+    let mut saw_lobby = false;
     for line in lines.by_ref() {
         let line = line.expect("read stdout line");
         if line.contains("netcode hub starting") {
@@ -57,12 +58,16 @@ fn boots_logs_and_shuts_down_cleanly() {
         if line.contains("client edge listening") {
             saw_edge = true;
         }
-        if saw_startup && saw_edge {
+        if line.contains("lobby api listening") {
+            saw_lobby = true;
+        }
+        if saw_startup && saw_edge && saw_lobby {
             break;
         }
     }
     assert!(saw_startup, "startup log line was not observed");
     assert!(saw_edge, "client edge log line was not observed");
+    assert!(saw_lobby, "lobby api log line was not observed");
 
     // Graceful stop: the first signal must lead to a clean exit.
     unsafe {

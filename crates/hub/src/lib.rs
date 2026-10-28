@@ -9,6 +9,7 @@
 pub mod backplane_service;
 pub mod client_edge;
 pub mod config;
+pub mod lobby;
 pub mod registry;
 pub mod signals;
 pub mod spawn;
@@ -102,6 +103,16 @@ async fn shutdown_loop(config: &Config) -> Result<(), anyhow::Error> {
         .context("failed to bind client edge")?;
     let edge_handle = edge.start();
 
+    let lobby = lobby::Service::bind(
+        &config.lobby,
+        &config.games,
+        service_handle.clone(),
+        edge_handle.cert_sha256(),
+    )
+    .await
+    .context("failed to bind lobby endpoint")?;
+    let lobby_handle = lobby.start();
+
     signals.first().await;
     info!(
         grace_secs = GRACE_PERIOD.as_secs(),
@@ -118,6 +129,8 @@ async fn shutdown_loop(config: &Config) -> Result<(), anyhow::Error> {
     // Stop accepting work, then drain within the grace period. Client
     // connections close first; workers see their clients leave, then the
     // backplane itself drains.
+    lobby_handle.shutdown();
+    let _ = tokio::time::timeout(GRACE_PERIOD, lobby_handle.drain()).await;
     edge_handle.shutdown();
     let _ = tokio::time::timeout(GRACE_PERIOD, edge_handle.drain()).await;
     service_handle.shutdown();

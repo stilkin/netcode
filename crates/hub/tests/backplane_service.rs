@@ -306,3 +306,93 @@ async fn disconnect_closes_session_and_detaches_clients() {
     service.shutdown();
     service.drain().await;
 }
+
+/// Consumes the attach notification for one client.
+async fn expect_attached(rd: &mut tokio::net::tcp::OwnedReadHalf, want: u32) {
+    match tokio::time::timeout(Duration::from_secs(2), conn::read_frame(rd))
+        .await
+        .expect("notification in time")
+        .expect("frame parses")
+    {
+        Frame::ClientAttached { client_id } => assert_eq!(client_id, want),
+        other => panic!("expected ClientAttached({want}), got {other:?}"),
+    }
+}
+
+/// (lobby-api: Session closure) Admin close drops the worker link, closes the
+/// registry entry, and detaches attached clients; unknown ids report Err.
+#[tokio::test]
+async fn admin_close_ends_the_session() {
+    let (service, addr) = start_service("").await;
+    let (mut rd, _wr, session_id) = fake_worker(addr, "", 0, &spec(8)).await;
+    let mut client = service.attach(session_id, "p1").await.expect("attach");
+    expect_attached(&mut rd, client.id).await;
+
+    // The admin close succeeds and the client's queue closes.
+    service
+        .close_session(session_id)
+        .await
+        .expect("open session closes");
+    assert!(client.recv().await.is_none(), "client queue is closed");
+
+    // The worker sees the link drop (connection closed by the hub).
+    let read = tokio::time::timeout(Duration::from_secs(2), conn::read_frame(&mut rd)).await;
+    match read {
+        Err(_) => panic!("hub should close the worker link promptly"),
+        Ok(Err(_)) => {} // closed — what we want
+        Ok(Ok(frame)) => panic!("expected closure, got {frame:?}"),
+    }
+
+    // The session is gone from the listing, and closing again reports Err.
+    assert!(service.sessions().await.is_empty());
+    assert!(service.close_session(session_id).await.is_err());
+
+    service.shutdown();
+    service.drain().await;
+}
+
+/// (lobby-api: Client kick) Kicking detaches exactly the named client: the
+/// worker is notified, the queue closes, unknown ids report false.
+#[tokio::test]
+async fn admin_kick_detaches_one_client() {
+    let (service, addr) = start_service("").await;
+    let (mut rd, _wr, session_id) = fake_worker(addr, "", 0, &spec(8)).await;
+    let mut kicked = service.attach(session_id, "p1").await.expect("attach");
+    expect_attached(&mut rd, kicked.id).await;
+    let stays = service.attach(session_id, "p2").await.expect("attach");
+    expect_attached(&mut rd, stays.id).await;
+
+    assert!(
+        service.kick(session_id, kicked.id).await,
+        "live client kicks"
+    );
+    assert!(
+        kicked.recv().await.is_none(),
+        "kicked client's queue closes"
+    );
+
+    // The worker observes exactly that detach.
+    match tokio::time::timeout(Duration::from_secs(2), conn::read_frame(&mut rd))
+        .await
+        .expect("notification in time")
+        .expect("frame parses")
+    {
+        Frame::ClientDetached { client_id } => assert_eq!(client_id, kicked.id),
+        other => panic!("expected ClientDetached, got {other:?}"),
+    }
+
+    // The other client is untouched; unknown ids do not kick.
+    assert!(!service.kick(session_id, 999).await, "unknown client");
+    // `stays` remains usable (its queue open): implicitly asserted by the
+    // player count below; a closed queue would have detached it.
+    let info = service
+        .sessions()
+        .await
+        .into_iter()
+        .find(|s| s.id == session_id)
+        .expect("session alive");
+    assert_eq!(info.player_count, 1, "one player remains");
+
+    service.shutdown();
+    service.drain().await;
+}

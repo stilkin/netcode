@@ -36,7 +36,6 @@ async fn start_hub() -> (hub::backplane_service::ServiceHandle, EdgeHandle) {
     let edge = Edge::bind(
         &ClientEdgeConfig {
             bind: "127.0.0.1:0".into(),
-            bootstrap_bind: "127.0.0.1:0".into(),
             token: String::new(),
         },
         backplane.clone(),

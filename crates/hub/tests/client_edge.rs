@@ -63,7 +63,6 @@ async fn start(token: &str) -> Rig {
 
     let edge_cfg = ClientEdgeConfig {
         bind: "127.0.0.1:0".into(),
-        bootstrap_bind: "127.0.0.1:0".into(),
         token: token.into(),
     };
     let edge = Edge::bind(&edge_cfg, backplane.clone())
@@ -604,54 +603,6 @@ async fn shutdown_closes_connected_clients() {
     rig.edge.drain().await;
     rig.backplane.shutdown();
     rig.backplane.drain().await;
-}
-
-/// (client-edge: Cert hash bootstrap endpoint) The endpoint serves the live
-/// hash, the test page, and 404s everything else.
-#[tokio::test]
-async fn bootstrap_serves_hash_page_and_404() {
-    let rig = start("").await;
-
-    let hash_body = http_get(rig.edge.bootstrap_addr(), "/cert-hash").await;
-    let expected = format!(
-        "{{\"sha256\":\"{}\"}}",
-        rig.edge
-            .cert_sha256()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
-    assert_eq!(hash_body, expected);
-
-    let page = http_get(rig.edge.bootstrap_addr(), "/").await;
-    assert!(page.contains("netcode hub"), "test page served");
-
-    assert_eq!(http_get(rig.edge.bootstrap_addr(), "/nope").await, "");
-
-    rig.stop().await;
-}
-
-async fn http_get(addr: SocketAddr, path: &str) -> String {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    stream
-        .write_all(
-            format!("GET {path} HTTP/1.1\r\nHost: hub\r\nConnection: close\r\n\r\n").as_bytes(),
-        )
-        .await
-        .expect("request");
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await.expect("response");
-    let text = String::from_utf8_lossy(&buf).into_owned();
-    let ok = text.starts_with("HTTP/1.1 200");
-    let (status_line, rest) = text.split_once("\r\n").unwrap_or(("", ""));
-    assert!(
-        ok || status_line.contains("404"),
-        "unexpected status: {status_line}"
-    );
-    rest.split_once("\r\n\r\n")
-        .map(|(_, body)| body.to_owned())
-        .unwrap_or_default()
 }
 
 /// (client-edge: WebTransport endpoint) The certificate rotates per boot.

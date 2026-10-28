@@ -145,6 +145,31 @@ impl ServiceHandle {
         resp_rx.await.expect("backplane core answered")
     }
 
+    /// Admin close: drops the worker link (workers exit on hub loss) and
+    /// closes the registry entry, detaching every client. `Err` carries the
+    /// id when no open session has it.
+    pub async fn close_session(&self, session_id: SessionId) -> Result<(), SessionId> {
+        let (resp, resp_rx) = oneshot::channel();
+        self.cmd
+            .send(Command::CloseSession { session_id, resp })
+            .expect("backplane core is alive");
+        resp_rx.await.expect("backplane core answered")
+    }
+
+    /// Admin kick: detaches one client (worker notified, transport closed).
+    /// Returns whether a live client was kicked.
+    pub async fn kick(&self, session_id: SessionId, client_id: ClientId) -> bool {
+        let (resp, resp_rx) = oneshot::channel();
+        self.cmd
+            .send(Command::Kick {
+                session_id,
+                client_id,
+                resp,
+            })
+            .expect("backplane core is alive");
+        resp_rx.await.expect("backplane core answered")
+    }
+
     /// Notifies the core that the worker behind a session is gone.
     pub(crate) fn worker_lost(&self, session_id: SessionId) {
         let _ = self.cmd.send(Command::WorkerLost { session_id });
@@ -177,6 +202,17 @@ enum Command {
     Detach {
         session_id: SessionId,
         client_id: ClientId,
+    },
+    /// Admin kick: like `Detach`, but reports whether the client existed.
+    Kick {
+        session_id: SessionId,
+        client_id: ClientId,
+        resp: oneshot::Sender<bool>,
+    },
+    /// Admin close: drop the worker link and close the registry entry.
+    CloseSession {
+        session_id: SessionId,
+        resp: oneshot::Sender<Result<(), SessionId>>,
     },
     Sessions {
         resp: oneshot::Sender<Vec<SessionInfo>>,
@@ -555,7 +591,25 @@ impl Core {
             Command::Detach {
                 session_id,
                 client_id,
-            } => self.detach_client(session_id, client_id),
+            } => {
+                self.detach_client(session_id, client_id);
+            }
+            Command::Kick {
+                session_id,
+                client_id,
+                resp,
+            } => {
+                let kicked = self.detach_client(session_id, client_id);
+                let _ = resp.send(kicked);
+            }
+            Command::CloseSession { session_id, resp } => {
+                let closed = self.close_session(session_id);
+                self.workers.remove(&session_id);
+                if closed {
+                    info!(session = session_id, "session closed by admin request");
+                }
+                let _ = resp.send(if closed { Ok(()) } else { Err(session_id) });
+            }
             Command::Sessions { resp } => {
                 let _ = resp.send(self.registry.list());
             }
@@ -624,24 +678,32 @@ impl Core {
     }
 
     /// Sends `ClientDetached` to the worker and forgets the client.
-    fn detach_client(&mut self, session_id: SessionId, client_id: ClientId) {
+    /// Returns whether a live client was actually detached.
+    fn detach_client(&mut self, session_id: SessionId, client_id: ClientId) -> bool {
         if self.clients.remove(&client_id).is_none() {
-            return; // already gone (e.g. the session closed first)
+            return false; // already gone (e.g. the session closed first)
         }
         if let Err(err) = self.registry.detach(session_id, client_id) {
             warn!(session = session_id, client = client_id, %err, "detach ignored");
-            return;
+            return false;
         }
         self.notify_worker(session_id, Frame::ClientDetached { client_id });
+        true
     }
 
-    fn close_session(&mut self, session_id: SessionId) {
-        if let Some(client_ids) = self.registry.close(session_id) {
-            for client_id in client_ids {
-                self.clients.remove(&client_id);
-            }
-        }
+    /// Closes the session if it is still open; returns whether it was.
+    fn close_session(&mut self, session_id: SessionId) -> bool {
+        let clients = self.registry.close(session_id);
         self.pendings.remove(&session_id);
+        match clients {
+            Some(client_ids) => {
+                for client_id in client_ids {
+                    self.clients.remove(&client_id);
+                }
+                true
+            }
+            None => false,
+        }
     }
 
     fn close_everything(&mut self) {
