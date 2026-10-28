@@ -20,10 +20,15 @@ struct Rig {
 }
 
 async fn start_hub() -> Rig {
+    start_hub_with_limit(64).await
+}
+
+async fn start_hub_with_limit(max_sessions: usize) -> Rig {
     let backplane = Backplane::bind_with_timeouts(
         &BackplaneConfig {
             bind: "127.0.0.1:0".into(),
             token: String::new(),
+            max_sessions,
         },
         Timeouts {
             registration: Duration::from_secs(2),
@@ -304,6 +309,75 @@ async fn lobby_manages_a_real_session_end_to_end() {
     .await;
 
     drop(player.writer);
+    rig.lobby.shutdown();
+    rig.lobby.drain().await;
+    rig.edge.shutdown();
+    rig.edge.drain().await;
+    rig.backplane.shutdown();
+    rig.backplane.clone().drain().await;
+}
+
+/// (lobby-api: Session creation) A real active worker fills the limit;
+/// rejection spawns nothing and consumes no id, and close releases capacity.
+#[tokio::test]
+async fn session_limit_rejects_then_close_frees_capacity() {
+    let rig = start_hub_with_limit(1).await;
+    let payload = r#"{"game_type":"echo-arena"}"#.to_owned();
+
+    let (status, body) = http(rig.lobby.addr(), "POST", "/api/sessions", Some(&payload)).await;
+    assert_eq!(status, 201, "body: {body}");
+    let first =
+        serde_json::from_str::<serde_json::Value>(&body).expect("first creation json")["session_id"]
+            .as_u64()
+            .expect("first session id") as u32;
+    poll_until(
+        || async {
+            let (_, body) = http(rig.lobby.addr(), "GET", "/api/sessions", None).await;
+            body.contains("\"active\"")
+        },
+        5,
+        "first session to become active",
+    )
+    .await;
+
+    let (status, body) = http(rig.lobby.addr(), "POST", "/api/sessions", Some(&payload)).await;
+    assert_eq!(status, 503, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+
+    let (status, _) = http(
+        rig.lobby.addr(),
+        "DELETE",
+        &format!("/api/sessions/{first}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 204);
+
+    let (status, body) = http(rig.lobby.addr(), "POST", "/api/sessions", Some(&payload)).await;
+    assert_eq!(status, 201, "creation after close: {body}");
+    let second = serde_json::from_str::<serde_json::Value>(&body)
+        .expect("second creation json")["session_id"]
+        .as_u64()
+        .expect("second session id") as u32;
+    assert_eq!(second, first + 1, "rejected creation consumed no id");
+    poll_until(
+        || async {
+            let (_, body) = http(rig.lobby.addr(), "GET", "/api/sessions", None).await;
+            body.contains("\"active\"") && body.contains(&format!("\"id\":{second}"))
+        },
+        5,
+        "second session to become active",
+    )
+    .await;
+
+    let (status, _) = http(
+        rig.lobby.addr(),
+        "DELETE",
+        &format!("/api/sessions/{second}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 204);
     rig.lobby.shutdown();
     rig.lobby.drain().await;
     rig.edge.shutdown();

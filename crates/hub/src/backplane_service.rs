@@ -137,7 +137,8 @@ impl ServiceHandle {
     }
 
     /// Creates a pending session (spawn flows reserve their id this way).
-    pub async fn create_pending(&self, spec: SessionSpec) -> SessionId {
+    /// Returns `None` without consuming an id at the live-session limit.
+    pub async fn create_pending(&self, spec: SessionSpec) -> Option<SessionId> {
         let (resp, resp_rx) = oneshot::channel();
         self.cmd
             .send(Command::CreatePending { spec, resp })
@@ -219,7 +220,7 @@ enum Command {
     },
     CreatePending {
         spec: SessionSpec,
-        resp: oneshot::Sender<SessionId>,
+        resp: oneshot::Sender<Option<SessionId>>,
     },
     Register {
         claimed_id: SessionId,
@@ -248,6 +249,8 @@ pub enum RegisterRejection {
     UnknownClaim(SessionId),
     /// The registry refused the transition (already active/closed).
     NotPending(SessionId),
+    /// A new self-registered session would exceed the live-session limit.
+    SessionLimitReached,
 }
 
 struct ClientRoute {
@@ -260,6 +263,7 @@ pub struct Service {
     listener: TcpListener,
     local_addr: SocketAddr,
     token: String,
+    max_sessions: usize,
     timeouts: Timeouts,
 }
 
@@ -291,6 +295,7 @@ impl Service {
             listener,
             local_addr,
             token: cfg.token.clone(),
+            max_sessions: cfg.max_sessions,
             timeouts,
         })
     }
@@ -332,7 +337,7 @@ impl Service {
         let core_cmd_tx = cmd_tx.clone();
         let core = tokio::spawn(async move {
             Core {
-                registry: Registry::new(),
+                registry: Registry::with_session_limit(self.max_sessions),
                 workers: HashMap::new(),
                 clients: HashMap::new(),
                 pendings: HashMap::new(),
@@ -614,10 +619,12 @@ impl Core {
                 let _ = resp.send(self.registry.list());
             }
             Command::CreatePending { spec, resp } => {
-                let id = self.registry.create_pending(&spec);
-                self.pendings.insert(id, Instant::now() + PENDING_TIMEOUT);
-                info!(session = id, game_type = %spec.game_type, "pending session created");
-                let _ = resp.send(id);
+                let created = self.registry.create_pending(&spec);
+                if let Some(id) = created {
+                    self.pendings.insert(id, Instant::now() + PENDING_TIMEOUT);
+                    info!(session = id, game_type = %spec.game_type, "pending session created");
+                }
+                let _ = resp.send(created);
             }
             Command::Register {
                 claimed_id,
@@ -626,7 +633,10 @@ impl Core {
                 resp,
             } => {
                 let outcome = match claimed_id {
-                    0 => Ok(self.registry.register_self(&spec)),
+                    0 => self
+                        .registry
+                        .register_self(&spec)
+                        .ok_or(RegisterRejection::SessionLimitReached),
                     id => match self.pendings.remove(&id) {
                         Some(_) => {
                             self.registry

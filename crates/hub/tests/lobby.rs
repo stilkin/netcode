@@ -36,10 +36,15 @@ fn dummy_game(game_type: &str, worker: &str) -> GameConfig {
 }
 
 async fn start(token: &str, games: Vec<GameConfig>) -> Rig {
+    start_with_limit(token, games, 64).await
+}
+
+async fn start_with_limit(token: &str, games: Vec<GameConfig>, max_sessions: usize) -> Rig {
     let backplane = Backplane::bind_with_timeouts(
         &BackplaneConfig {
             bind: "127.0.0.1:0".into(),
             token: String::new(),
+            max_sessions,
         },
         SLOW,
     )
@@ -89,6 +94,26 @@ impl Rig {
     }
 }
 
+/// Sends raw request bytes and reads one complete response.
+async fn exchange(addr: std::net::SocketAddr, request: String) -> (u16, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    stream.write_all(request.as_bytes()).await.expect("request");
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.expect("response");
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    let status: u16 = text
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .expect("status code");
+    let body = text
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body.to_owned())
+        .unwrap_or_default();
+    (status, body)
+}
+
 /// One HTTP request/response exchange over a fresh connection.
 async fn http(
     addr: std::net::SocketAddr,
@@ -97,8 +122,6 @@ async fn http(
     body: Option<&str>,
     auth: Option<&str>,
 ) -> (u16, String) {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
     let mut request = format!("{method} {path} HTTP/1.1\r\nHost: hub\r\n");
     if let Some(auth) = auth {
         request.push_str(&format!("Authorization: {auth}\r\n"));
@@ -118,20 +141,7 @@ async fn http(
     if let Some(body) = body {
         request.push_str(body);
     }
-    stream.write_all(request.as_bytes()).await.expect("request");
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await.expect("response");
-    let text = String::from_utf8_lossy(&buf).into_owned();
-    let status: u16 = text
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .expect("status code");
-    let body = text
-        .split_once("\r\n\r\n")
-        .map(|(_, body)| body.to_owned())
-        .unwrap_or_default();
-    (status, body)
+    exchange(addr, request).await
 }
 
 /// (lobby-api: Game catalog) The catalog lists configured games; an empty
@@ -163,7 +173,7 @@ async fn session_listing_shows_metadata() {
         max_players: 4,
         payload_schema_version: 1,
     };
-    let id = rig.backplane.create_pending(spec).await;
+    let id = rig.backplane.create_pending(spec).await.expect("pending");
 
     let (status, body) = http(rig.lobby.addr(), "GET", "/api/sessions", None, None).await;
     assert_eq!(status, 200);
@@ -219,6 +229,124 @@ async fn session_creation_error_paths() {
     rig.stop().await;
 }
 
+/// (lobby-api: Session creation) Capacity rejection happens before the
+/// configured worker program is executed and leaves existing sessions alone.
+#[tokio::test]
+async fn session_creation_at_capacity_returns_503() {
+    let rig = start_with_limit("", vec![dummy_game("ghost", "/nonexistent/worker")], 1).await;
+    let pending = rig
+        .backplane
+        .create_pending(SessionSpec {
+            game_type: "probe".into(),
+            display_name: "Probe".into(),
+            max_players: 1,
+            payload_schema_version: 1,
+        })
+        .await
+        .expect("pending at the limit");
+
+    let (status, body) = http(
+        rig.lobby.addr(),
+        "POST",
+        "/api/sessions",
+        Some(r#"{"game_type":"ghost"}"#),
+        None,
+    )
+    .await;
+    assert_eq!(status, 503, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+    let sessions = rig.backplane.sessions().await;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, pending);
+    rig.stop().await;
+}
+
+/// (lobby-api: Session creation) Browser-simple and missing media types
+/// cannot create sessions; normal JSON parameters and header casing work.
+#[tokio::test]
+async fn session_creation_requires_json_content_type() {
+    let rig = start("", vec![dummy_game("ghost", "/nonexistent/worker")]).await;
+    let payload = r#"{"game_type":"ghost"}"#;
+
+    for content_type in [None, Some("text/plain")] {
+        let content_type = content_type
+            .map(|value| format!("Content-Type: {value}\r\n"))
+            .unwrap_or_default();
+        let request = format!(
+            "POST /api/sessions HTTP/1.1\r\nHost: hub\r\n{content_type}Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+            payload.len()
+        );
+        let (status, body) = exchange(rig.lobby.addr(), request).await;
+        assert_eq!(status, 415, "content type {content_type:?}: {body}");
+    }
+
+    for content_type in ["application/json", "Application/JSON; charset=utf-8"] {
+        let payload = r#"{"game_type":"chess"}"#;
+        let request = format!(
+            "POST /api/sessions HTTP/1.1\r\nHost: hub\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nConnection: close\r\n\r\n{payload}",
+            payload.len()
+        );
+        let (status, body) = exchange(rig.lobby.addr(), request).await;
+        assert_eq!(status, 404, "content type {content_type:?}: {body}");
+        assert!(body.contains("chess"), "body: {body}");
+    }
+
+    let (_, body) = http(rig.lobby.addr(), "GET", "/api/sessions", None, None).await;
+    assert_eq!(body, "[]", "rejected requests created no sessions");
+    rig.stop().await;
+}
+
+/// (lobby-api: HTTP request framing) Recognized header names are ASCII
+/// case-insensitive for authentication as well as body framing.
+#[tokio::test]
+async fn lowercase_headers_carry_auth_and_body() {
+    let rig = start("s3cret", vec![dummy_game("ghost", "/nonexistent/worker")]).await;
+    let payload = r#"{"game_type":"ghost"}"#;
+    let request = format!(
+        "POST /api/sessions HTTP/1.1\r\nHost: hub\r\nauthorization: Bearer s3cret\r\ncontent-type: application/json\r\ncontent-length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    let (status, body) = exchange(rig.lobby.addr(), request).await;
+    assert_eq!(status, 500, "authenticated request reached spawn: {body}");
+    rig.stop().await;
+}
+
+/// (lobby-api: HTTP request framing) Ambiguous or unsupported body framing
+/// receives a deterministic 400 instead of being routed.
+#[tokio::test]
+async fn ambiguous_request_framing_is_rejected() {
+    let rig = start("", vec![dummy_game("ghost", "/nonexistent/worker")]).await;
+    let payload = r#"{"game_type":"ghost"}"#;
+    let length = payload.len();
+    let cases = [
+        (
+            "duplicate lengths",
+            format!("Content-Length: {length}\r\nContent-Length: {length}\r\n"),
+        ),
+        (
+            "conflicting lengths",
+            format!("Content-Length: {length}\r\nContent-Length: 0\r\n"),
+        ),
+        ("malformed length", "Content-Length: nope\r\n".to_owned()),
+        (
+            "transfer encoding",
+            format!("Transfer-Encoding: chunked\r\nContent-Length: {length}\r\n"),
+        ),
+    ];
+
+    for (name, framing) in cases {
+        let request = format!(
+            "POST /api/sessions HTTP/1.1\r\nHost: hub\r\nContent-Type: application/json\r\n{framing}Connection: close\r\n\r\n{payload}"
+        );
+        let (status, body) = exchange(rig.lobby.addr(), request).await;
+        assert_eq!(status, 400, "{name}: {body}");
+    }
+
+    let (_, body) = http(rig.lobby.addr(), "GET", "/api/sessions", None, None).await;
+    assert_eq!(body, "[]", "rejected requests created no sessions");
+    rig.stop().await;
+}
+
 /// (lobby-api: Session closure, Client kick) Unknown ids 404; a live
 /// pending session closes cleanly.
 #[tokio::test]
@@ -245,7 +373,7 @@ async fn close_and_kick_unknown_ids_are_404() {
         max_players: 4,
         payload_schema_version: 1,
     };
-    let id = rig.backplane.create_pending(spec).await;
+    let id = rig.backplane.create_pending(spec).await.expect("pending");
     let (status, _) = http(
         rig.lobby.addr(),
         "DELETE",
@@ -347,7 +475,7 @@ async fn session_states_map_to_strings() {
         max_players: 1,
         payload_schema_version: 1,
     };
-    let id = rig.backplane.create_pending(spec).await;
+    let id = rig.backplane.create_pending(spec).await.expect("pending");
 
     let (status, body) = http(rig.lobby.addr(), "GET", "/api/sessions", None, None).await;
     assert_eq!(status, 200);

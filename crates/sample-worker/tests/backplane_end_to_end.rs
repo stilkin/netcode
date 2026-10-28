@@ -18,6 +18,7 @@ async fn start_service() -> (ServiceHandle, std::net::SocketAddr) {
     let cfg = BackplaneConfig {
         bind: "127.0.0.1:0".into(),
         token: String::new(),
+        max_sessions: 64,
     };
     let service = Service::bind_with_timeouts(
         &cfg,
@@ -214,7 +215,8 @@ async fn full_loop_with_spawned_worker() {
             max_players: 1,
             payload_schema_version: 1,
         })
-        .await;
+        .await
+        .expect("pending");
     assert!(
         fresh > session_id && fresh > doomed,
         "{fresh} must exceed {before:?}"

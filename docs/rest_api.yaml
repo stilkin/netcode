@@ -60,9 +60,13 @@ paths:
                 items: { $ref: "#/components/schemas/Session" }
     post:
       summary: Create a session by spawning the game's worker
+      description: Returns 415 for a missing/non-JSON Content-Type and 503 at the live-session limit.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
+        description: >
+          Requires `Content-Type: application/json`; media-type parameters
+          such as `charset=utf-8` are allowed.
         content:
           application/json:
             schema:
@@ -82,7 +86,9 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
         "500": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /api/sessions/{id}:
     delete:
       summary: Close a session (worker exits, clients detached)

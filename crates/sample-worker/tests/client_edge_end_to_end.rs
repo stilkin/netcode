@@ -22,6 +22,7 @@ async fn start_hub() -> (hub::backplane_service::ServiceHandle, EdgeHandle) {
         &BackplaneConfig {
             bind: "127.0.0.1:0".into(),
             token: String::new(),
+            max_sessions: 64,
         },
         Timeouts {
             registration: Duration::from_secs(2),

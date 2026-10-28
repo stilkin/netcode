@@ -16,9 +16,17 @@ const FAST: Timeouts = Timeouts {
 };
 
 async fn start_service(token: &str) -> (ServiceHandle, std::net::SocketAddr) {
+    start_service_with_limit(token, 64).await
+}
+
+async fn start_service_with_limit(
+    token: &str,
+    max_sessions: usize,
+) -> (ServiceHandle, std::net::SocketAddr) {
     let cfg = BackplaneConfig {
         bind: "127.0.0.1:0".into(),
         token: token.into(),
+        max_sessions,
     };
     let service = Service::bind_with_timeouts(&cfg, FAST).await.expect("bind");
     let addr = service.local_addr();
@@ -122,6 +130,47 @@ async fn wrong_token_is_rejected() {
     service.drain().await;
 }
 
+/// (backplane: Worker registration and session claiming) The limit rejects
+/// new self-registration but does not invalidate an existing pending claim.
+#[tokio::test]
+async fn session_limit_rejects_self_registration_but_not_pending_claim() {
+    let (service, addr) = start_service_with_limit("", 1).await;
+    let pending = service.create_pending(spec(8)).await.expect("pending");
+
+    let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let (mut rd, mut wr) = stream.into_split();
+    conn::write_frame(
+        &mut wr,
+        &Frame::Hello {
+            token: String::new(),
+        },
+    )
+    .await
+    .expect("Hello");
+    conn::write_frame(
+        &mut wr,
+        &Frame::Register {
+            claimed_id: 0,
+            game_type: "echo-arena".into(),
+            display_name: "Echo Arena".into(),
+            max_players: 8,
+            payload_schema_version: 1,
+        },
+    )
+    .await
+    .expect("self Register");
+    expect_closed(&mut rd).await;
+    let sessions = service.sessions().await;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, pending);
+
+    let (_rd, _wr, claimed) = fake_worker(addr, "", pending, &spec(8)).await;
+    assert_eq!(claimed, pending);
+    assert_eq!(service.sessions().await[0].state, SessionState::Active);
+    service.shutdown();
+    service.drain().await;
+}
+
 #[tokio::test]
 async fn silent_worker_is_reaped() {
     let (service, addr) = start_service("").await;
@@ -137,7 +186,7 @@ async fn silent_worker_is_reaped() {
 #[tokio::test]
 async fn bad_claim_closes_connection_but_keeps_pending() {
     let (service, addr) = start_service("").await;
-    let pending = service.create_pending(spec(8)).await;
+    let pending = service.create_pending(spec(8)).await.expect("pending");
     let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
     let (mut rd, mut wr) = stream.into_split();
     conn::write_frame(

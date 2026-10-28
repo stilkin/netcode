@@ -11,6 +11,7 @@ async fn start_service() -> (ServiceHandle, std::net::SocketAddr) {
     let cfg = BackplaneConfig {
         bind: "127.0.0.1:0".into(),
         token: String::new(),
+        max_sessions: 64,
     };
     let service = Service::bind_with_timeouts(
         &cfg,
@@ -65,7 +66,8 @@ async fn exiting_worker_closes_its_session_and_ids_are_not_reused() {
             max_players: 8,
             payload_schema_version: 1,
         })
-        .await;
+        .await
+        .expect("pending");
     assert!(second > first);
 
     service.shutdown();

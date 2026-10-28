@@ -55,6 +55,7 @@ async fn start(token: &str) -> Rig {
     let backplane_cfg = BackplaneConfig {
         bind: "127.0.0.1:0".into(),
         token: String::new(),
+        max_sessions: 64,
     };
     let backplane = Backplane::bind_with_timeouts(&backplane_cfg, SLOW)
         .await
@@ -84,7 +85,11 @@ fn spec(max_players: u16) -> SessionSpec {
 /// Creates a pending session and activates it with a fake worker claim.
 async fn active_session(rig: &Rig, max_players: u16) -> (u32, Rd, Wr) {
     let spec = spec(max_players);
-    let pending = rig.backplane.create_pending(spec.clone()).await;
+    let pending = rig
+        .backplane
+        .create_pending(spec.clone())
+        .await
+        .expect("pending");
     let (rd, wr, id) = fake_worker(rig.backplane.local_addr(), pending, &spec).await;
     assert_eq!(id, pending, "worker claims the pending session");
     (id, rd, wr)
@@ -368,7 +373,11 @@ async fn join_rules_reject_with_reasons() {
     }
 
     // Pending (never claimed by a worker): not joinable.
-    let pending = rig.backplane.create_pending(spec(8)).await;
+    let pending = rig
+        .backplane
+        .create_pending(spec(8))
+        .await
+        .expect("pending");
     match join(&rig.edge, pending, "p", "").await {
         Join::Rejected(reason) => assert!(reason.contains("not accepting"), "reason: {reason}"),
         Join::Ok(_) => panic!("pending session must not join"),

@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::registry::DEFAULT_MAX_SESSIONS;
+
 /// Top-level hub configuration.
 ///
 /// Unknown keys are rejected so a typo fails loudly instead of silently
@@ -51,6 +53,8 @@ pub struct BackplaneConfig {
     /// Shared token workers must present in `Hello`. Empty disables the
     /// check (loopback trust).
     pub token: String,
+    /// Maximum combined pending and active sessions. Zero disables creation.
+    pub max_sessions: usize,
 }
 
 impl Default for BackplaneConfig {
@@ -58,6 +62,7 @@ impl Default for BackplaneConfig {
         Self {
             bind: "127.0.0.1:24000".to_owned(),
             token: String::new(),
+            max_sessions: DEFAULT_MAX_SESSIONS,
         }
     }
 }
@@ -278,6 +283,7 @@ mod backplane_config_tests {
         let config = Config::load(Path::new("/nonexistent/hub.toml")).expect("defaults");
         assert_eq!(config.backplane.bind, "127.0.0.1:24000");
         assert_eq!(config.backplane.token, "");
+        assert_eq!(config.backplane.max_sessions, 64);
     }
 
     /// (hub-runtime: Configuration loading) A valid section parses.
@@ -285,11 +291,21 @@ mod backplane_config_tests {
     fn backplane_section_parses() {
         let path = write_tmp(
             "backplane-valid",
-            "log_level = \"debug\"\n[backplane]\nbind = \"127.0.0.1:24111\"\ntoken = \"s3cret\"\n",
+            "log_level = \"debug\"\n[backplane]\nbind = \"127.0.0.1:24111\"\ntoken = \"s3cret\"\nmax_sessions = 3\n",
         );
         let config = Config::load(&path).expect("valid config");
         assert_eq!(config.backplane.bind, "127.0.0.1:24111");
         assert_eq!(config.backplane.token, "s3cret");
+        assert_eq!(config.backplane.max_sessions, 3);
+    }
+
+    /// (hub-runtime: Backplane session limit) Zero is a real limit, not an
+    /// unlimited sentinel.
+    #[test]
+    fn zero_session_limit_parses() {
+        let path = write_tmp("backplane-zero", "[backplane]\nmax_sessions = 0\n");
+        let config = Config::load(&path).expect("valid config");
+        assert_eq!(config.backplane.max_sessions, 0);
     }
 
     /// (hub-runtime: Configuration loading) Unknown nested keys are rejected.

@@ -34,6 +34,7 @@ impl Rig {
             &BackplaneConfig {
                 bind: "127.0.0.1:0".into(),
                 token: String::new(),
+                max_sessions: 64,
             },
             SLOW,
         )
@@ -82,7 +83,7 @@ impl Rig {
             max_players: 64,
             payload_schema_version: 1,
         };
-        let pending = self.backplane.create_pending(spec).await;
+        let pending = self.backplane.create_pending(spec).await.expect("pending");
 
         let stream = tokio::net::TcpStream::connect(self.backplane.local_addr())
             .await

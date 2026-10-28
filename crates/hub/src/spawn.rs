@@ -24,6 +24,8 @@ pub struct SpawnRequest {
 pub enum SpawnError {
     #[error("failed to spawn worker: {0}")]
     Io(#[from] std::io::Error),
+    #[error("live-session limit reached")]
+    SessionLimitReached,
 }
 
 impl ServiceHandle {
@@ -31,7 +33,10 @@ impl ServiceHandle {
     /// the child exits for any reason the session is closed and its clients
     /// are detached. The hub never restarts workers.
     pub async fn spawn_session(&self, req: SpawnRequest) -> Result<SessionId, SpawnError> {
-        let session_id = self.create_pending(req.spec.clone()).await;
+        let session_id = self
+            .create_pending(req.spec.clone())
+            .await
+            .ok_or(SpawnError::SessionLimitReached)?;
         let mut command = tokio::process::Command::new(&req.program);
         command
             .arg("--backplane")

@@ -87,6 +87,7 @@ log_level = "info"   # trace | debug | info | warn | error
 [backplane]
 bind = "127.0.0.1:24000"   # loopback by design: trusted control plane
 token = ""                 # shared token workers must present; empty = off
+max_sessions = 64          # pending + active; closed sessions do not count
 
 [client_edge]
 bind = "0.0.0.0:4433"      # WebTransport (UDP) — LAN-facing
@@ -106,7 +107,18 @@ worker = "target/debug/sample-worker"
 session_config_json = '{"tick_hz":60}'
 ```
 
-`RUST_LOG` always overrides `log_level`. Exit codes: `0` clean stop after
+`RUST_LOG` always overrides `log_level`. `backplane.max_sessions` bounds new
+spawned and self-registered sessions; `0` disables creation, and closing a
+session releases its slot. Session creation at the limit returns `503`.
+
+`POST /api/sessions` requires `Content-Type: application/json` (parameters
+such as `charset=utf-8` are allowed) and returns `415` otherwise. Malformed
+or ambiguous HTTP body framing returns `400`. On untrusted or production
+networks, set a long random `lobby.token` and require clients to send it as a
+Bearer token; the empty-token open-LAN mode is for trusted development, and
+JSON content-type enforcement is not a substitute for authentication.
+
+Exit codes: `0` clean stop after
 Ctrl-C/SIGTERM · `1` invalid configuration (error names the key) · `2` fatal
 error · `130` second signal during shutdown.
 

@@ -17,6 +17,9 @@ const FIRST_ID: u32 = 1;
 /// Number of recently closed sessions whose metadata remains available.
 const CLOSED_HISTORY_LIMIT: usize = 1024;
 
+/// Default combined pending and active session limit.
+pub const DEFAULT_MAX_SESSIONS: usize = 64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
     /// Spawned, awaiting its worker's `Register` claim.
@@ -73,19 +76,30 @@ struct SessionEntry {
 }
 
 /// The registry. Ids are monotonic and never reused while the process runs.
-#[derive(Default)]
 pub struct Registry {
     next_session_id: u32,
     next_client_id: u32,
+    max_sessions: usize,
     sessions: HashMap<SessionId, SessionEntry>,
     closed_order: VecDeque<SessionId>,
 }
 
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Registry {
     pub fn new() -> Self {
+        Self::with_session_limit(DEFAULT_MAX_SESSIONS)
+    }
+
+    pub fn with_session_limit(max_sessions: usize) -> Self {
         Self {
             next_session_id: FIRST_ID,
             next_client_id: FIRST_ID,
+            max_sessions,
             sessions: HashMap::new(),
             closed_order: VecDeque::new(),
         }
@@ -106,7 +120,17 @@ impl Registry {
     }
 
     /// Creates a pending session for a worker the hub is about to spawn.
-    pub fn create_pending(&mut self, spec: &SessionSpec) -> SessionId {
+    /// Returns `None` without consuming an id when the live-session limit
+    /// is full. Pending and active sessions count; closed tombstones do not.
+    pub fn create_pending(&mut self, spec: &SessionSpec) -> Option<SessionId> {
+        let live = self
+            .sessions
+            .values()
+            .filter(|entry| entry.info.state != SessionState::Closed)
+            .count();
+        if live >= self.max_sessions {
+            return None;
+        }
         let id = self.alloc_session_id();
         self.sessions.insert(
             id,
@@ -123,14 +147,14 @@ impl Registry {
                 client_ids: Vec::new(),
             },
         );
-        id
+        Some(id)
     }
 
     /// Registers a self-managed worker's session as immediately active.
-    pub fn register_self(&mut self, spec: &SessionSpec) -> SessionId {
-        let id = self.create_pending(spec);
+    pub fn register_self(&mut self, spec: &SessionSpec) -> Option<SessionId> {
+        let id = self.create_pending(spec)?;
         self.activate(id).expect("fresh session is pending");
-        id
+        Some(id)
     }
 
     /// Transitions a pending session to active (its worker registered).
@@ -250,8 +274,8 @@ mod tests {
     #[test]
     fn concurrent_registrations_get_distinct_ids() {
         let mut registry = Registry::new();
-        let a = registry.create_pending(&spec());
-        let b = registry.register_self(&spec());
+        let a = registry.create_pending(&spec()).expect("create a");
+        let b = registry.register_self(&spec()).expect("register b");
         assert_ne!(a, b);
     }
 
@@ -259,9 +283,9 @@ mod tests {
     #[test]
     fn ids_are_not_reused_after_close() {
         let mut registry = Registry::new();
-        let first = registry.create_pending(&spec());
+        let first = registry.create_pending(&spec()).expect("first");
         registry.close(first);
-        let second = registry.create_pending(&spec());
+        let second = registry.create_pending(&spec()).expect("second");
         assert!(second > first);
     }
 
@@ -269,7 +293,7 @@ mod tests {
     #[test]
     fn player_count_tracks_membership() {
         let mut registry = Registry::new();
-        let id = registry.register_self(&spec());
+        let id = registry.register_self(&spec()).expect("register");
         let c1 = registry.attach(id, "p1").expect("attach 1");
         let c2 = registry.attach(id, "p2").expect("attach 2");
         assert_eq!(registry.get(id).expect("session").player_count, 2);
@@ -282,7 +306,7 @@ mod tests {
     #[test]
     fn full_session_refuses_attach() {
         let mut registry = Registry::new();
-        let id = registry.register_self(&spec());
+        let id = registry.register_self(&spec()).expect("register");
         registry.attach(id, "p1").expect("attach 1");
         registry.attach(id, "p2").expect("attach 2");
         assert_eq!(registry.attach(id, "p3"), Err(AttachError::Full(id)));
@@ -293,7 +317,7 @@ mod tests {
     #[test]
     fn pending_sessions_are_not_joinable() {
         let mut registry = Registry::new();
-        let id = registry.create_pending(&spec());
+        let id = registry.create_pending(&spec()).expect("create pending");
         assert_eq!(registry.attach(id, "p1"), Err(AttachError::NotJoinable(id)));
         registry.activate(id).expect("activate");
         registry
@@ -305,7 +329,7 @@ mod tests {
     #[test]
     fn close_is_idempotent_and_reports_clients() {
         let mut registry = Registry::new();
-        let id = registry.register_self(&spec());
+        let id = registry.register_self(&spec()).expect("register");
         registry.attach(id, "p1").expect("attach");
         let detached = registry.close(id).expect("first close");
         assert_eq!(detached.len(), 1);
@@ -313,15 +337,46 @@ mod tests {
         assert_eq!(registry.attach(id, "p2"), Err(AttachError::NotJoinable(id)));
     }
 
+    /// (session-registry: Live session capacity) Pending and active entries
+    /// fill the limit; rejection consumes no id and close frees a slot.
+    #[test]
+    fn live_session_limit_is_atomic_and_close_frees_capacity() {
+        let mut registry = Registry::with_session_limit(1);
+        let first = registry.create_pending(&spec()).expect("first pending");
+        assert_eq!(registry.create_pending(&spec()), None);
+        assert_eq!(registry.list().len(), 1);
+
+        registry.activate(first).expect("activate first");
+        assert_eq!(registry.register_self(&spec()), None);
+        registry.close(first).expect("close first");
+
+        let second = registry.register_self(&spec()).expect("capacity released");
+        assert_eq!(second, first + 1, "rejected attempts consumed no id");
+        assert_eq!(
+            registry.get(first).expect("closed tombstone remains").state,
+            SessionState::Closed
+        );
+    }
+
+    /// (session-registry: Live session capacity) Zero denies creation rather
+    /// than acting as an unlimited sentinel.
+    #[test]
+    fn zero_session_limit_denies_creation() {
+        let mut registry = Registry::with_session_limit(0);
+        assert_eq!(registry.create_pending(&spec()), None);
+        assert_eq!(registry.register_self(&spec()), None);
+        assert!(registry.list().is_empty());
+    }
+
     /// (session-registry: Closed session history) Overflow evicts only the
     /// oldest tombstone; live sessions and newer tombstones remain.
     #[test]
     fn closed_history_is_bounded_and_evicts_oldest() {
         let mut registry = Registry::new();
-        let open = registry.create_pending(&spec());
+        let open = registry.create_pending(&spec()).expect("open session");
         let mut closed = Vec::new();
         for _ in 0..=CLOSED_HISTORY_LIMIT {
-            let id = registry.create_pending(&spec());
+            let id = registry.create_pending(&spec()).expect("close candidate");
             registry.close(id);
             closed.push(id);
         }
@@ -351,7 +406,7 @@ mod tests {
             "closed entries plus the open session"
         );
 
-        let next = registry.create_pending(&spec());
+        let next = registry.create_pending(&spec()).expect("next id");
         assert!(next > newest, "evicted ids are never reused");
     }
 
@@ -360,7 +415,7 @@ mod tests {
     #[test]
     fn repeated_close_does_not_consume_history() {
         let mut registry = Registry::new();
-        let id = registry.register_self(&spec());
+        let id = registry.register_self(&spec()).expect("register");
         registry.close(id).expect("first close");
         for _ in 0..=CLOSED_HISTORY_LIMIT {
             assert_eq!(registry.close(id), None);
@@ -376,7 +431,7 @@ mod tests {
     #[test]
     fn activating_a_non_pending_session_fails() {
         let mut registry = Registry::new();
-        let id = registry.register_self(&spec());
+        let id = registry.register_self(&spec()).expect("register");
         assert_eq!(registry.activate(id), Err(RegistryError::NotPending(id)));
     }
 }

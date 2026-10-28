@@ -24,7 +24,7 @@ use tracing::{info, warn};
 use crate::backplane_service::ServiceHandle as Backplane;
 use crate::config::{GameConfig, LobbyConfig};
 use crate::registry::{ClientId, SessionId, SessionState};
-use crate::spawn::SpawnRequest;
+use crate::spawn::{SpawnError, SpawnRequest};
 
 /// Largest request (head + body) we tolerate before giving up.
 const MAX_REQUEST: usize = 64 * 1024;
@@ -137,16 +137,24 @@ struct Request {
     method: String,
     path: String,
     authorization: Option<String>,
+    content_type: Option<String>,
     body: Vec<u8>,
+}
+
+enum RequestRead {
+    Request(Request),
+    Invalid(&'static str),
+    Incomplete,
 }
 
 /// Reads and answers exactly one HTTP/1.1 request.
 async fn serve_one(mut stream: TcpStream, state: Arc<State>) -> std::io::Result<()> {
-    let request = match read_request(&mut stream).await? {
-        Some(request) => request,
-        None => return Ok(()),
+    let response = match read_request(&mut stream).await? {
+        RequestRead::Request(request) => route(&request, &state).await,
+        RequestRead::Invalid(message) => error("400 Bad Request", message),
+        RequestRead::Incomplete => return Ok(()),
     };
-    let (status, content_type, body) = route(&request, &state).await;
+    let (status, content_type, body) = response;
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
         body.len()
@@ -157,20 +165,20 @@ async fn serve_one(mut stream: TcpStream, state: Arc<State>) -> std::io::Result<
 }
 
 /// Reads a full request head plus a bounded `Content-Length` body.
-async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
+async fn read_request(stream: &mut TcpStream) -> std::io::Result<RequestRead> {
     let mut buf = Vec::with_capacity(256);
     let mut chunk = [0u8; 1024];
     let head_end = loop {
         let n = stream.read(&mut chunk).await?;
         if n == 0 {
-            return Ok(None);
+            return Ok(RequestRead::Incomplete);
         }
         buf.extend_from_slice(&chunk[..n]);
         if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
             break pos + 4;
         }
         if buf.len() > MAX_REQUEST {
-            return Ok(None);
+            return Ok(RequestRead::Incomplete);
         }
     };
 
@@ -182,30 +190,54 @@ async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>
     let path = parts.next().unwrap_or_default().to_owned();
 
     let mut authorization = None;
-    let mut content_length = 0usize;
+    let mut content_type = None;
+    let mut content_length = None;
     for line in lines {
-        if let Some(value) = line.strip_prefix("Authorization:") {
-            authorization = Some(value.trim().to_owned());
-        } else if let Some(value) = line.strip_prefix("Content-Length:") {
-            content_length = value.trim().parse().unwrap_or(0);
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("Authorization") {
+            authorization = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("Content-Type") {
+            content_type = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("Content-Length") {
+            if content_length.is_some() {
+                return Ok(RequestRead::Invalid("duplicate Content-Length"));
+            }
+            let length = value
+                .parse::<usize>()
+                .ok()
+                .filter(|length| *length <= MAX_REQUEST);
+            let Some(length) = length else {
+                return Ok(RequestRead::Invalid("invalid Content-Length"));
+            };
+            content_length = Some(length);
+        } else if name.eq_ignore_ascii_case("Transfer-Encoding") {
+            return Ok(RequestRead::Invalid("Transfer-Encoding is not supported"));
         }
     }
 
+    let content_length = content_length.unwrap_or(0);
     let mut body = buf[head_end..].to_vec();
-    if content_length > MAX_REQUEST || body.len() > content_length {
-        return Ok(None);
+    if body.len() > content_length {
+        return Ok(RequestRead::Invalid("request exceeds Content-Length"));
     }
     while body.len() < content_length {
         let n = stream.read(&mut chunk).await?;
         if n == 0 {
-            return Ok(None);
+            return Ok(RequestRead::Incomplete);
         }
         body.extend_from_slice(&chunk[..n]);
     }
-    Ok(Some(Request {
+    if body.len() != content_length {
+        return Ok(RequestRead::Invalid("request exceeds Content-Length"));
+    }
+    Ok(RequestRead::Request(Request {
         method,
         path,
         authorization,
+        content_type,
         body,
     }))
 }
@@ -359,6 +391,17 @@ async fn route(request: &Request, state: &State) -> Response {
 
 /// `POST /api/sessions`: catalog lookup → spawn → session id.
 async fn create_session(request: &Request, state: &State) -> Response {
+    let is_json = request
+        .content_type
+        .as_deref()
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
+    if !is_json {
+        return error(
+            "415 Unsupported Media Type",
+            "Content-Type must be application/json",
+        );
+    }
     let Ok(create) = serde_json::from_slice::<CreateSession>(&request.body) else {
         return error(
             "400 Bad Request",
@@ -390,6 +433,9 @@ async fn create_session(request: &Request, state: &State) -> Response {
                 "201 Created",
                 serde_json::json!({ "session_id": session_id }),
             )
+        }
+        Err(SpawnError::SessionLimitReached) => {
+            error("503 Service Unavailable", "live-session limit reached")
         }
         Err(err) => error(
             "500 Internal Server Error",
