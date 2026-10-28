@@ -27,25 +27,6 @@ the SHA-256 hash of the certificate DER at startup.
 - **THEN** a fresh certificate is generated and the logged hash differs from
   the previous boot's
 
-### Requirement: Cert hash bootstrap endpoint
-
-The hub MUST serve, over plain HTTP/1.1 on `client_edge.bootstrap_bind`:
-`GET /cert-hash` returning the current certificate SHA-256 as JSON
-(`{"sha256": "<hex>"}`), `GET /` returning a built-in single-page test
-client, and `404` for any other path. Responses MUST set
-`Access-Control-Allow-Origin: *` so pages served from the future lobby API
-can fetch the hash.
-
-#### Scenario: Hash fetch
-
-- **WHEN** a browser requests `GET /cert-hash`
-- **THEN** the response is JSON naming the same hash the startup log printed
-
-#### Scenario: Unknown path
-
-- **WHEN** a request arrives for any path other than `/cert-hash` or `/`
-- **THEN** the response status is 404
-
 ### Requirement: Connect handshake
 
 A client MUST open exactly one bidirectional stream immediately after the
