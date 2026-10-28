@@ -137,6 +137,9 @@ pub struct WorkerConfig {
 
 #[derive(Debug, Error)]
 pub enum SdkError {
+    /// The configured tick rate cannot produce a non-zero tick period.
+    #[error("invalid session configuration: tick_hz must produce a non-zero tick period")]
+    InvalidTickRate,
     /// The hub was unreachable at startup.
     #[error("cannot reach hub at {addr}")]
     Connect {
@@ -152,6 +155,14 @@ pub enum SdkError {
 /// Runs the worker until the hub disconnects. Returns cleanly when the hub
 /// goes away; only startup problems produce errors.
 pub async fn run(config: WorkerConfig, mut game: impl GameSession) -> Result<(), SdkError> {
+    if config.session.tick_hz == 0 {
+        return Err(SdkError::InvalidTickRate);
+    }
+    let tick_period = Duration::from_secs_f64(1.0 / f64::from(config.session.tick_hz));
+    if tick_period.is_zero() {
+        return Err(SdkError::InvalidTickRate);
+    }
+
     let stream = TcpStream::connect(&config.backplane_addr)
         .await
         .map_err(|source| SdkError::Connect {
@@ -225,7 +236,6 @@ pub async fn run(config: WorkerConfig, mut game: impl GameSession) -> Result<(),
     });
 
     let mut inputs: Vec<ClientInput> = Vec::new();
-    let tick_period = Duration::from_secs_f64(1.0 / f64::from(config.session.tick_hz));
     let mut tick_interval = tokio::time::interval(tick_period);
     tick_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut heartbeat = tokio::time::interval(config.heartbeat_interval);

@@ -106,7 +106,8 @@ artifact hosting, not CI.
 On a machine without cross toolchains, the docker path still rehearses the
 whole pipeline: `cargo run -p xtask -- release --skip-linux --skip-windows`
 builds and validates the image (the image compiles musl inside the
-container).
+container). The flow builds the current host `netcode-bots` before using it
+to judge the image, so a missing or stale debug binary cannot weaken the check.
 
 ## Coverage
 

@@ -26,6 +26,8 @@ pub fn validate_static_build(root: &Path, target: &str) -> Result<()> {
 /// the host debug `netcode-bots` at it.
 pub fn validate_docker_image(root: &Path, tag: &str) -> Result<()> {
     println!("== self-validate (docker image {tag}) ==");
+    run(root, "cargo", &["build", "-p", "conformance"])
+        .context("build host netcode-bots for image validation")?;
     let lobby = free_tcp_port()?;
     let edge = free_udp_port()?;
     let name = format!("netcode-hub-validate-{}", std::process::id());

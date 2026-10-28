@@ -3,7 +3,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use hub_sdk::{CHANNEL_STATE, ClientInput, GameInfo, GameSession, SessionCtx, WorkerConfig, run};
+use hub_sdk::{
+    CHANNEL_STATE, ClientInput, GameInfo, GameSession, SdkError, SessionCtx, WorkerConfig, run,
+};
 use protocol::Header;
 use tokio::io::AsyncWriteExt;
 
@@ -297,4 +299,36 @@ async fn fragmented_frames_survive_ticks() {
         .expect("worker finishes after hub loss")
         .expect("worker task");
     assert!(outcome.is_ok(), "hub loss is a clean stop: {outcome:?}");
+}
+
+/// (hub-sdk: Tick rate validation) Invalid rates fail before the SDK can
+/// attempt a connection to this deliberately invalid address.
+#[tokio::test]
+async fn invalid_tick_rates_are_configuration_errors() {
+    for tick_hz in [0, u32::MAX] {
+        let recording = Recording::default();
+        let err = run(
+            WorkerConfig {
+                backplane_addr: "127.0.0.1:0".into(),
+                token: String::new(),
+                claim: None,
+                info: GameInfo {
+                    game_type: "echo-arena".into(),
+                    display_name: "Echo Arena".into(),
+                    max_players: 8,
+                    payload_schema_version: 1,
+                },
+                session: hub_sdk::SessionConfig { tick_hz },
+                heartbeat_interval: Duration::from_millis(20),
+            },
+            recording.game(),
+        )
+        .await
+        .expect_err("invalid tick rate must not start the worker");
+        assert!(
+            matches!(&err, SdkError::InvalidTickRate),
+            "tick_hz {tick_hz}: wrong error {err:?}"
+        );
+        assert!(err.to_string().contains("tick_hz"), "error: {err}");
+    }
 }

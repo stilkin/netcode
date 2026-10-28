@@ -47,7 +47,9 @@ pub fn release(flags: &Flags) -> Result<()> {
 
     println!("== release {version} ==");
     if flags.skip_linux {
-        println!("--skip-linux: static Linux binaries AND self-validation skipped");
+        println!(
+            "--skip-linux: static Linux binaries skipped; using Docker validation when available"
+        );
     }
 
     // --- cross-builds ---
