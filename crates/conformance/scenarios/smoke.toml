@@ -1,0 +1,30 @@
+# Smoke profile: a quick health check for a running hub.
+#
+#   netcode-bots run crates/conformance/scenarios/smoke.toml
+#
+# Points at a hub on localhost with the default ports; adjust the
+# endpoints for remote hosts. Creates two echo-arena sessions via the
+# lobby API and drives eight bots through them.
+
+[hub]
+lobby = "127.0.0.1:8080"
+edge = "127.0.0.1:4433"
+
+[sessions]
+mode = "create"
+game = "echo-arena"
+count = 2
+
+[bots]
+count = 8
+
+[script]
+inputs_per_bot = 50
+input_interval_ms = 20
+duration_ms = 30000
+
+[thresholds]
+join_success = 1.0
+max_loss_ratio = 0.25
+ordering_violations = 0
+p95_latency_ms = 100

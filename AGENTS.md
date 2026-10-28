@@ -74,6 +74,7 @@ crates/hub             the `hub` binary: config (strict TOML incl. [[games]]), r
                        (WebTransport), lobby (HTTP API), graceful shutdown
 crates/hub-sdk         game-side contract: implement GameSession, SDK does the networking
 crates/sample-worker   echo arena — reference game + test fixture
+crates/conformance/    netcode-bots: protocol-verified bots, scenarios, fixtures
 openspec/specs/        current behavior — source of truth per capability
 docs/                  architecture · roadmap · development
 ```
@@ -88,6 +89,6 @@ docs/                  architecture · roadmap · development
   the message names the change/tasks it implements.
 - A crate appears in the workspace when its roadmap change needs it — a crate
   skeleton ahead of need is a design smell here.
-- Status (2026-10): changes 1–4 implemented (wire protocol, hub runtime,
-  backplane + SDK + sample worker, WebTransport client edge, lobby/admin
-  HTTP API). Conformance bots (change 5) are pending.
+- Status (2026-10): roadmap complete — changes 1–5 implemented (wire
+  protocol, hub runtime, backplane + SDK + sample worker, WebTransport
+  client edge, lobby/admin HTTP API, conformance bots).

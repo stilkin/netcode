@@ -47,6 +47,7 @@ client socket.
 |---|---|
 | [`crates/protocol`](../crates/protocol/) | The shared packet header codec — the entire interoperability contract. std-only so it can also be embedded in `wasm32` browser clients later. Pinned by golden vectors. |
 | [`crates/hub`](../crates/hub/) | The `hub` binary: TOML configuration (strict), `tracing` logging, graceful shutdown (bounded drain, impatient second signal), `--version`. Verified by an end-to-end boot/SIGINT test. |
+| conformance (`crates/conformance`) | `netcode-bots`: headless protocol-verified WebTransport clients, a TOML scenario runner with thresholds and JSON reports, deterministic fixtures (logical ordering, loss-bounded), and load smoke profiles with stall isolation. Hub-free by design — it judges from outside. |
 | lobby API (`hub::lobby`) | The HTTP surface: game catalog, session listing/creation/closure, client kick, token gate, and the absorbed cert-hash + test-page routes. Hand-rolled HTTP/1.1 + JSON; documented in `docs/rest_api.yaml`. Verified end-to-end against the real sample worker. |
 | client edge (`hub::client_edge`) | The browser-facing WebTransport endpoint: per-boot ECDSA P-256 certificate pinned by SHA-256 hash, join handshake (`Connect`/`Accept`/`Reject`), state ⇄ datagrams / events ⇄ control-stream relay with per-connection backpressure, bootstrap endpoint (cert hash + test page). Verified end-to-end by a hash-pinned WT client against a spawned worker. |
 

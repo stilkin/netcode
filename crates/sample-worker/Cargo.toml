@@ -17,6 +17,7 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+conformance = { path = "../conformance" }
 hub = { path = "../hub" }
 protocol = { path = "../protocol" }
 wtransport = { workspace = true }

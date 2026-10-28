@@ -15,6 +15,8 @@ crates/
                          lobby: HTTP API + test page ([[games]] catalog))
   hub-sdk/               the game-side contract: GameSession trait + runtime
   sample-worker/         echo arena — reference game + test fixture
+  conformance/           netcode-bots: bot client, scenario runner,
+                         fixtures, load profiles (scenarios/smoke.toml)
 docs/                    project documentation (you are here)
 openspec/
   specs/<capability>/    current behavior — source of truth
@@ -83,9 +85,11 @@ cargo install cargo-llvm-cov            # once; also: rustup component add llvm-
 cargo llvm-cov --workspace --summary-only   # add --html for a browsable report
 ```
 
-Current state (post-change-4): ~92% line coverage overall; `crates/protocol`
-is at ~97% (the header codec itself at 100% lines), `registry` at ~99%,
-`client_edge` at ~91%, and `lobby` at ~92%. The uncovered remainder is dominated
+Current state (post-change-5): ~90% line coverage overall; `crates/protocol`
+is at ~97% (the header codec itself at 100% lines), `registry` ~99%,
+`client_edge` ~91%, `lobby` ~92%, `conformance` ~82% (bot join-error and
+timeout branches are deliberately unchased; the `netcode-bots` binary is
+thin glue). The uncovered remainder is dominated
 by branches deliberately not chased with contrived tests: OS-specific signal
 fallbacks, the impatient second-signal exit (130), fatal-exit mapping, SDK
 connection-failure error paths, and join-frame decode error arms. Re-measure

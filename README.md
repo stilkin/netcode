@@ -6,11 +6,10 @@ per-session game-worker processes, one process per running lobby. Adding a new
 game means dropping a new worker binary on the box; the hub itself is never
 rebuilt for new games.
 
-> **Status:** roadmap changes 1–4 implemented — the wire protocol, the hub
-> runtime, the worker backplane with a game SDK and a sample game, the
-> WebTransport client edge, and the lobby/admin HTTP API (85 tests, local
-> pre-commit gates). Conformance bots land in change 5; see
-> [docs/roadmap.md](docs/roadmap.md).
+> **Status:** roadmap changes 1–5 implemented — wire protocol, hub runtime,
+> worker backplane with game SDK, WebTransport client edge, lobby/admin HTTP
+> API, and conformance bots (96 tests, local pre-commit gates). The roadmap
+> is complete; see [docs/roadmap.md](docs/roadmap.md).
 
 ## What is the project?
 
@@ -43,6 +42,7 @@ pluggable — is in [docs/architecture.md](docs/architecture.md).
 | Backplane codec | hand-rolled, zero-dependency ([spec](crates/backplane/docs/backplane-format.md)) |
 | Client transport | [WebTransport](https://docs.rs/wtransport) over QUIC + [rcgen](https://docs.rs/rcgen) self-signed certs (see policy note) |
 | Lobby API | hand-rolled HTTP/1.1 + [serde_json](https://docs.rs/serde_json) — [OpenAPI](docs/rest_api.yaml) |
+| Conformance | `netcode-bots`: protocol-verified headless clients, deterministic fixtures, load smoke profiles |
 | Game SDK | `hub-sdk`: implement `GameSession`, the SDK does all networking |
 | Commit gates | version-controlled pre-commit hook — fmt, clippy `-D warnings`, tests before every commit |
 | Process | [OpenSpec](https://openspec.dev) spec-driven development ([docs/development.md](docs/development.md)) |
@@ -147,6 +147,9 @@ arena. The same routes are the documented REST API
 
 ## REST API and database
 
+- **Conformance / load**: `cargo run -p conformance --bin netcode-bots -- run crates/conformance/scenarios/smoke.toml`
+  drives a running hub with protocol-verified bots and exits 0/1; write your
+  own scenarios for bigger profiles.
 - **REST API:** the lobby/admin API ([`docs/rest_api.yaml`](docs/rest_api.yaml))
   serves the game catalog, session listing/creation/closure, and client kick,
   plus the cert-hash and test-page routes on the `[lobby]` listener.
