@@ -342,9 +342,9 @@ async fn relay(
     mut client: ClientHandle,
     shutdown: &mut watch::Receiver<bool>,
 ) {
-    // Stream reading runs as its own task: `RecvStream::read` fills a caller
-    // buffer and is not cancel-safe, so it must never sit inside a `select!`
-    // arm. The task parses self-delimiting packets and forwards them.
+    // Stream reading has one owner task, keeping framing state out of the
+    // relay; the select loop receives only parsed packets. `RecvStream::read`
+    // is cancel-safe — this separation is for ownership, not cancellation.
     let (inbound_tx, mut inbound_rx) =
         tokio::sync::mpsc::unbounded_channel::<Result<Vec<u8>, ()>>();
     tokio::spawn(async move {

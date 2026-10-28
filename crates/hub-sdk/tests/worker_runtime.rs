@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use hub_sdk::{CHANNEL_STATE, ClientInput, GameInfo, GameSession, SessionCtx, WorkerConfig, run};
 use protocol::Header;
+use tokio::io::AsyncWriteExt;
 
 type Inputs = Arc<Mutex<Vec<(u32, Vec<u8>)>>>;
 
@@ -202,4 +203,98 @@ async fn worker_runtime_full_loop() {
         vec![(1, b"abc".to_vec())]
     );
     assert!(!recording.ticks.lock().unwrap().is_empty());
+}
+
+/// (hub-sdk: Fragmented frames survive worker scheduling) A tick must not
+/// cancel a partially consumed frame: the next frame still starts at the
+/// length prefix, not in the middle of the previous frame's body.
+#[tokio::test]
+async fn fragmented_frames_survive_ticks() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let recording = Recording::default();
+    let worker = tokio::spawn(run(
+        WorkerConfig {
+            backplane_addr: addr.to_string(),
+            token: String::new(),
+            claim: None,
+            info: GameInfo {
+                game_type: "echo-arena".into(),
+                display_name: "Echo Arena".into(),
+                max_players: 8,
+                payload_schema_version: 1,
+            },
+            session: hub_sdk::SessionConfig { tick_hz: 60 },
+            heartbeat_interval: Duration::from_millis(20),
+        },
+        recording.game(),
+    ));
+
+    let (stream, _) = listener.accept().await.expect("worker connects");
+    let (mut rd, mut wr) = stream.into_split();
+    tokio::time::timeout(Duration::from_secs(5), backplane::conn::read_frame(&mut rd))
+        .await
+        .expect("Hello arrives")
+        .expect("Hello parses");
+    tokio::time::timeout(Duration::from_secs(5), backplane::conn::read_frame(&mut rd))
+        .await
+        .expect("Register arrives")
+        .expect("Register parses");
+    backplane::conn::write_frame(&mut wr, &backplane::Frame::Registered { session_id: 9 })
+        .await
+        .expect("write Registered");
+
+    let frame = |payload: &[u8]| {
+        backplane::Frame::FromClient {
+            packet: Header::new(CHANNEL_STATE, 9, 1, 1, payload.len() as u32)
+                .encode_packet(payload)
+                .expect("packet"),
+        }
+        .encode_to_vec()
+        .expect("frame")
+    };
+    let first = frame(b"first");
+    let second = frame(b"second");
+
+    // Four length bytes, the opcode, and two body bytes. The old direct
+    // read is now pending inside `read_exact` for the rest of the body.
+    wr.write_all(&first[..8]).await.expect("partial frame");
+    wr.flush().await.expect("flush partial frame");
+
+    // Let several select iterations cancel the old partial read. Observing
+    // game ticks, rather than sleeping a guessed duration, proves they ran.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while recording.ticks.lock().unwrap().len() < 3 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("ticks run while the frame is incomplete");
+
+    wr.write_all(&first[8..]).await.expect("finish first frame");
+    wr.write_all(&second).await.expect("second frame");
+    wr.flush().await.expect("flush complete frames");
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while recording.inputs.lock().unwrap().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("both fragmented and subsequent inputs arrive");
+    assert_eq!(
+        *recording.inputs.lock().unwrap(),
+        vec![(1, b"first".to_vec()), (1, b"second".to_vec())]
+    );
+
+    drop(wr);
+    drop(rd);
+    let outcome = tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("worker finishes after hub loss")
+        .expect("worker task");
+    assert!(outcome.is_ok(), "hub loss is a clean stop: {outcome:?}");
 }

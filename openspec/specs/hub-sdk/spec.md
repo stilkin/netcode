@@ -21,6 +21,11 @@ MUST come from the session configuration.
 - **WHEN** a client sends two inputs between two ticks of a 30 Hz session
 - **THEN** the next `tick` call observes both inputs
 
+#### Scenario: Fragmented frames survive worker scheduling
+
+- **WHEN** a backplane frame arrives in fragments while ticks or heartbeats become ready
+- **THEN** the SDK delivers the complete frame once, preserves frame order, and keeps the worker connected
+
 ### Requirement: Output helpers
 
 The SDK MUST provide the game a context with `to_client`, `to_many`, and

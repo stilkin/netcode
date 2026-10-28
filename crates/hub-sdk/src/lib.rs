@@ -212,6 +212,18 @@ pub async fn run(config: WorkerConfig, mut game: impl GameSession) -> Result<(),
         }
     });
 
+    // `read_frame` spans cancel-unsafe length and body reads. Keep it out of
+    // the select loop so ticks and heartbeats cannot discard a partial frame.
+    // Capacity one preserves TCP backpressure if game callbacks run slowly.
+    let (frames_tx, mut frames_rx) = mpsc::channel(1);
+    let reader = tokio::spawn(async move {
+        while let Ok(frame) = conn::read_frame(&mut rd).await {
+            if frames_tx.send(frame).await.is_err() {
+                break;
+            }
+        }
+    });
+
     let mut inputs: Vec<ClientInput> = Vec::new();
     let tick_period = Duration::from_secs_f64(1.0 / f64::from(config.session.tick_hz));
     let mut tick_interval = tokio::time::interval(tick_period);
@@ -224,14 +236,14 @@ pub async fn run(config: WorkerConfig, mut game: impl GameSession) -> Result<(),
 
     loop {
         tokio::select! {
-            read = conn::read_frame(&mut rd) => match read {
-                Ok(Frame::ClientAttached { client_id }) => {
+            frame = frames_rx.recv() => match frame {
+                Some(Frame::ClientAttached { client_id }) => {
                     game.on_attach(&ctx, client_id, "");
                 }
-                Ok(Frame::ClientDetached { client_id }) => {
+                Some(Frame::ClientDetached { client_id }) => {
                     game.on_detach(&ctx, client_id);
                 }
-                Ok(Frame::FromClient { packet }) => {
+                Some(Frame::FromClient { packet }) => {
                     if let Ok((header, payload)) = Header::split_packet(&packet) {
                         inputs.push(ClientInput {
                             client_id: header.client_id,
@@ -239,9 +251,9 @@ pub async fn run(config: WorkerConfig, mut game: impl GameSession) -> Result<(),
                         });
                     }
                 }
-                Ok(_) => {}
-                // Hub loss is a clean stop, never an error.
-                Err(_) => break,
+                Some(_) => {}
+                // Reader exit means hub loss: a clean stop, never an error.
+                None => break,
             },
             _ = tick_interval.tick() => {
                 let dt = last_tick.elapsed().as_secs_f32();
@@ -255,6 +267,7 @@ pub async fn run(config: WorkerConfig, mut game: impl GameSession) -> Result<(),
         }
     }
 
+    reader.abort();
     pump.abort();
     Ok(())
 }
