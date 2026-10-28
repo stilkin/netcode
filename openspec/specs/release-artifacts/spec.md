@@ -66,7 +66,9 @@ declare UDP 4433 and TCP 8080, and the hub MUST be the entrypoint.
 Before publishing anything, the release flow MUST start the freshly
 built hub binary with a temporary configuration and run the conformance
 bots' smoke scenario against it end to end. A failing or crashing smoke
-MUST fail the release; no artifact is published unvalidated.
+MUST fail the release; no artifact is published unvalidated. The
+Docker-image validation path MUST build the host `netcode-bots` from the
+current checkout before using it.
 
 #### Scenario: Bots validate the artifact
 
@@ -79,6 +81,11 @@ MUST fail the release; no artifact is published unvalidated.
 - **WHEN** the built hub binary fails to boot or the smoke scenario fails
 - **THEN** the release aborts with the failure named, and no publishing
   step runs
+
+#### Scenario: Docker validation builds its judge
+
+- **WHEN** image validation runs without `target/debug/netcode-bots`
+- **THEN** Cargo builds the current host binary before the smoke scenario starts
 
 ### Requirement: Release command
 

@@ -14,7 +14,7 @@
 
 ## 4. Fresh-checkout release rehearsal
 
-- [ ] 4.1 After the initial commit, run `cargo run -p xtask -- release --skip-linux --skip-windows` in a detached worktree with no host debug bot; verify Cargo builds the bot, image self-validation passes, no publish occurs, and the worktree is removed; then remove B6/B7 from the local findings document
+- [x] 4.1 After the initial commit, run `cargo run -p xtask -- release --skip-linux --skip-windows` in a detached worktree with no host debug bot; verify Cargo builds the bot, image self-validation passes, no publish occurs, and the worktree is removed; then remove B6/B7 from the local findings document
 
 ## Workflow follow-up
 
