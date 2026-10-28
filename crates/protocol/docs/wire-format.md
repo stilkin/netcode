@@ -49,3 +49,46 @@ Reference size: a v1 header is exactly **24 bytes**.
 - The golden vectors in `crates/protocol/tests/golden.rs` pin this format.
   Changing one requires a deliberate protocol-evolution decision; it must never
   be a refactoring side effect.
+
+## Join frames (handshake v1)
+
+Before any packet flows, a client joins over the transport's control stream by
+exchanging three self-describing binary frames. Every frame starts with a kind
+byte and a version byte (`JOIN_VERSION = 1`); a receiver treats any other kind
+or version as malformed. Multi-byte integers are little-endian, strings are
+UTF-8 with a `u16` byte length. Pinned by golden vectors alongside the header.
+
+### `Connect` (client → hub, kind `0x01`)
+
+| Offset | Size | Field         | Notes |
+|-------:|-----:|---------------|-------|
+| 0      | 1    | kind          | `0x01` |
+| 1      | 1    | version       | `1` |
+| 2      | 2    | token_len     | ≤ 256 |
+| 4      | n    | token         | shared secret; empty when the hub runs open |
+| 4+n    | 4    | session_id    | the session to join |
+| 8+n    | 2    | name_len      | ≤ 64 |
+| 10+n   | m    | name          | player display name |
+
+### `Accept` (hub → client, kind `0x02`)
+
+| Offset | Size | Field     | Notes |
+|-------:|-----:|-----------|-------|
+| 0      | 1    | kind      | `0x02` |
+| 1      | 1    | version   | `1` |
+| 2      | 4    | client_id | assigned by the hub; valid within the session |
+
+### `Reject` (hub → client, kind `0x03`)
+
+| Offset | Size | Field      | Notes |
+|-------:|-----:|------------|-------|
+| 0      | 1    | kind       | `0x03` |
+| 1      | 1    | version    | `1` |
+| 2      | 2    | reason_len | ≤ 256 |
+| 4      | n    | reason     | human-readable; clients show it as-is |
+
+A hub reply may be either `Accept` or `Reject`; the kind byte lets clients
+decode without knowing which to expect. The hub closes the transport session
+after sending a `Reject`. After `Accept`, the control stream carries event
+packets (see the client-edge capability): a plain concatenation of full
+packets framed by the header's `payload_len`.

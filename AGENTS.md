@@ -16,7 +16,11 @@ Violating any of these breaks the project's core design — hold them through ev
 2. **Game decisions are simulated server-side**, in workers. On a LAN there is no
    client prediction, no reconciliation.
 3. **Pure-Rust dependencies only** — no C/C++ build deps; Windows and Ubuntu must
-   build identically. (`libc` is allowed as a dev-dependency where a test needs a raw signal.)
+   build identically. **One documented exception (2026-10-27, change 3):** the
+   WebTransport transport tree (`wtransport` → quinn → rustls → `ring`), confined
+   to the client edge — users receive Docker images / static binaries and never
+   compile it; everything else stays pure Rust. (`libc` is allowed as a
+   dev-dependency where a test needs a raw signal.)
 4. **Unknown input is rejected at the boundary** — config keys, packet magic,
    protocol versions.
 5. **Golden vectors** (`crates/protocol/tests/golden.rs`) pin the wire format.

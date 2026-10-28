@@ -106,3 +106,47 @@ fn golden_shrunken_header_is_rejected() {
     let err = Header::split_packet(&hex(HEADER_TOO_SMALL)).expect_err("shrunken header");
     assert_eq!(err, Error::HeaderTooSmall { got: 16, base: 24 });
 }
+
+/// Join frame: `Connect` with token "s3cret", session 7, name "p1".
+const JOIN_CONNECT: &str = "010106007333637265740700000002007031";
+
+#[test]
+fn golden_join_connect() {
+    let bytes = hex(JOIN_CONNECT);
+    let frame = protocol::Connect::decode(&bytes).expect("golden connect decodes");
+    assert_eq!(frame.token, "s3cret");
+    assert_eq!(frame.session_id, 7);
+    assert_eq!(frame.name, "p1");
+    // Canonical encoding: round-trip is byte-exact.
+    assert_eq!(frame.encode().expect("re-encode"), bytes);
+}
+
+/// Join frame: `Accept` with client id 2.
+const JOIN_ACCEPT: &str = "020102000000";
+
+#[test]
+fn golden_join_accept() {
+    let bytes = hex(JOIN_ACCEPT);
+    let frame = protocol::Accept::decode(&bytes).expect("golden accept decodes");
+    assert_eq!(frame.client_id, 2);
+    assert_eq!(frame.encode(), bytes);
+    match protocol::Reply::decode(&bytes).expect("reply dispatches") {
+        protocol::Reply::Accepted(a) => assert_eq!(a.client_id, 2),
+        other => panic!("expected Accepted, got {other:?}"),
+    }
+}
+
+/// Join frame: `Reject` with reason "session full".
+const JOIN_REJECT: &str = "03010c0073657373696f6e2066756c6c";
+
+#[test]
+fn golden_join_reject() {
+    let bytes = hex(JOIN_REJECT);
+    let frame = protocol::Reject::decode(&bytes).expect("golden reject decodes");
+    assert_eq!(frame.reason, "session full");
+    assert_eq!(frame.encode(), bytes);
+    match protocol::Reply::decode(&bytes).expect("reply dispatches") {
+        protocol::Reply::Rejected(r) => assert_eq!(r.reason, "session full"),
+        other => panic!("expected Rejected, got {other:?}"),
+    }
+}

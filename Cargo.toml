@@ -11,8 +11,12 @@ publish = false
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
 thiserror = "2"
+time = { version = "0.3", features = ["std"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wtransport = "0.7"
+rcgen = "0.14"

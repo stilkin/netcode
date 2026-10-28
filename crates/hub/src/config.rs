@@ -8,8 +8,8 @@ use serde::Deserialize;
 /// Top-level hub configuration.
 ///
 /// Unknown keys are rejected so a typo fails loudly instead of silently
-/// falling back to a default. Later changes extend this struct (backplane
-/// address, client ports, worker paths).
+/// falling back to a default. Later changes extend this struct (client ports,
+/// worker paths).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
@@ -17,6 +17,8 @@ pub struct Config {
     pub log_level: String,
     /// Hub-to-worker listener settings.
     pub backplane: BackplaneConfig,
+    /// Browser-facing WebTransport listener settings.
+    pub client_edge: ClientEdgeConfig,
 }
 
 impl Default for Config {
@@ -24,6 +26,7 @@ impl Default for Config {
         Self {
             log_level: "info".to_owned(),
             backplane: BackplaneConfig::default(),
+            client_edge: ClientEdgeConfig::default(),
         }
     }
 }
@@ -46,6 +49,33 @@ impl Default for BackplaneConfig {
     fn default() -> Self {
         Self {
             bind: "127.0.0.1:24000".to_owned(),
+            token: String::new(),
+        }
+    }
+}
+
+/// Browser-facing client-edge listener settings (WebTransport + bootstrap).
+///
+/// Unlike the backplane these bind all interfaces: the client edge is the
+/// LAN-facing surface players connect to.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ClientEdgeConfig {
+    /// WebTransport (QUIC/UDP) listener address, e.g. `0.0.0.0:4433`.
+    pub bind: String,
+    /// Plain-HTTP bootstrap endpoint address (cert hash + test page),
+    /// e.g. `0.0.0.0:8080`. Absorbed by the lobby API in a later change.
+    pub bootstrap_bind: String,
+    /// Shared secret a `Connect` frame must present. Empty disables the
+    /// check (LAN trust), mirroring the backplane token.
+    pub token: String,
+}
+
+impl Default for ClientEdgeConfig {
+    fn default() -> Self {
+        Self {
+            bind: "0.0.0.0:4433".to_owned(),
+            bootstrap_bind: "0.0.0.0:8080".to_owned(),
             token: String::new(),
         }
     }
@@ -95,6 +125,22 @@ impl Config {
                 path.display(),
                 config.backplane.bind
             )));
+        }
+        for key in [
+            ("client_edge.bind", &config.client_edge.bind),
+            (
+                "client_edge.bootstrap_bind",
+                &config.client_edge.bootstrap_bind,
+            ),
+        ] {
+            if let Err(err) = key.1.parse::<std::net::SocketAddr>() {
+                return Err(ConfigError(format!(
+                    "invalid config in {}: `{}` = {:?} is not a valid address: {err}",
+                    path.display(),
+                    key.0,
+                    key.1
+                )));
+            }
         }
         Ok(config)
     }
@@ -198,5 +244,68 @@ mod backplane_config_tests {
         let path = write_tmp("backplane-bind", "[backplane]\nbind = \"nonsense\"\n");
         let err = Config::load(&path).expect_err("bad bind must fail");
         assert!(err.to_string().contains("backplane.bind"), "error: {err}");
+    }
+}
+
+#[cfg(test)]
+mod client_edge_config_tests {
+    use super::*;
+    use std::path::Path;
+
+    fn write_tmp(name: &str, contents: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("hub-cfg-test-{}-{name}", std::process::id()));
+        std::fs::write(&path, contents).expect("write temp config");
+        path
+    }
+
+    /// (hub-runtime: Client edge startup) Defaults without the section.
+    #[test]
+    fn defaults_include_client_edge() {
+        let config = Config::load(Path::new("/nonexistent/hub.toml")).expect("defaults");
+        assert_eq!(config.client_edge.bind, "0.0.0.0:4433");
+        assert_eq!(config.client_edge.bootstrap_bind, "0.0.0.0:8080");
+        assert_eq!(config.client_edge.token, "");
+    }
+
+    /// (hub-runtime: Client edge startup) A valid section parses.
+    #[test]
+    fn client_edge_section_parses() {
+        let path = write_tmp(
+            "edge-valid",
+            "[client_edge]\nbind = \"0.0.0.0:4533\"\nbootstrap_bind = \"0.0.0.0:9090\"\ntoken = \"lan\"\n",
+        );
+        let config = Config::load(&path).expect("valid config");
+        assert_eq!(config.client_edge.bind, "0.0.0.0:4533");
+        assert_eq!(config.client_edge.bootstrap_bind, "0.0.0.0:9090");
+        assert_eq!(config.client_edge.token, "lan");
+    }
+
+    /// (hub-runtime: Client edge startup) Unknown nested keys are rejected
+    /// and named.
+    #[test]
+    fn unknown_client_edge_key_is_rejected() {
+        let path = write_tmp("edge-typo", "[client_edge]\nprotocl = \"webtransport\"\n");
+        let err = Config::load(&path).expect_err("typo must fail");
+        assert!(err.to_string().contains("protocl"), "error: {err}");
+    }
+
+    /// (hub-runtime: Client edge startup) Invalid addresses are rejected
+    /// and named.
+    #[test]
+    fn invalid_client_edge_bind_is_rejected() {
+        let path = write_tmp("edge-bind", "[client_edge]\nbind = \"nonsense\"\n");
+        let err = Config::load(&path).expect_err("bad bind must fail");
+        assert!(err.to_string().contains("client_edge.bind"), "error: {err}");
+
+        let path = write_tmp(
+            "edge-bootstrap-bind",
+            "[client_edge]\nbootstrap_bind = \"nonsense\"\n",
+        );
+        let err = Config::load(&path).expect_err("bad bind must fail");
+        assert!(
+            err.to_string().contains("client_edge.bootstrap_bind"),
+            "error: {err}"
+        );
     }
 }

@@ -13,7 +13,12 @@ context: |
   Prime directive: keep it simple, elegant, maintainable.
   - Smallest crate set and dependency list that works; no speculative layers.
   - Pure-Rust dependencies only (no C/C++ build deps) so both platforms build
-    with one toolchain and one CI matrix.
+    with one toolchain and one CI matrix — amended 2026-10-27 for the
+    WebTransport client edge (change add-webtransport-client-edge): the one
+    documented exception is the transport tree wtransport -> quinn -> rustls
+    -> ring, confined to the client edge; users receive artifacts (Docker
+    image / static binaries) and never compile it. Everything else stays
+    pure Rust.
   - Game decisions are simulated server-side (in workers); clients stay dumb
     (send inputs, interpolate, render).
 

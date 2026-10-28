@@ -224,3 +224,247 @@ fn le_u16(bytes: &[u8]) -> u16 {
 fn le_u32(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
+
+// ---------------------------------------------------------------------------
+// Join frames — the handshake a client exchanges with the hub when joining a
+// session. Frames are self-describing (kind byte + version) so replies can be
+// decoded without knowing which answer to expect. Layout: `docs/wire-format.md`.
+// ---------------------------------------------------------------------------
+
+/// The only join-frame version this build speaks.
+pub const JOIN_VERSION: u8 = 1;
+
+/// Kind byte: a client's request to join a session.
+pub const KIND_CONNECT: u8 = 0x01;
+/// Kind byte: the hub's acceptance, carrying the assigned client id.
+pub const KIND_ACCEPT: u8 = 0x02;
+/// Kind byte: the hub's refusal, carrying a human-readable reason.
+pub const KIND_REJECT: u8 = 0x03;
+
+/// Sanity bound on the shared-secret token.
+pub const MAX_TOKEN_LEN: usize = 256;
+/// Sanity bound on player and session display names.
+pub const MAX_NAME_LEN: usize = 64;
+/// Sanity bound on reject reasons.
+pub const MAX_REASON_LEN: usize = 256;
+
+/// Everything that can go wrong while decoding a join frame.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum JoinError {
+    /// The buffer ends before the frame does.
+    #[error("truncated join frame: need at least {needed} bytes, got {got}")]
+    Truncated { needed: usize, got: usize },
+    /// The kind byte names a frame this build does not speak.
+    #[error("unknown join frame kind 0x{got:02x}")]
+    UnknownKind { got: u8 },
+    /// The frame declares a version this build cannot speak.
+    #[error("unsupported join frame version {got} (this build speaks {supported})")]
+    UnsupportedVersion { got: u8, supported: u8 },
+    /// A string field is not valid UTF-8.
+    #[error("join frame string field is not valid UTF-8")]
+    BadUtf8,
+    /// A length field exceeds its sanity bound.
+    #[error("join frame field length {len} exceeds the {max}-byte limit")]
+    FieldTooLarge { len: usize, max: usize },
+}
+
+/// A client's request to join a session (kind [`KIND_CONNECT`]).
+///
+/// Wire: `01 | version u8 | token_len u16 | token | session_id u32 |
+/// name_len u16 | name`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Connect {
+    /// Shared secret; empty when the hub runs open (LAN trust).
+    pub token: String,
+    /// The session to join.
+    pub session_id: u32,
+    /// The player's display name.
+    pub name: String,
+}
+
+impl Connect {
+    /// Encodes the frame; rejects over-long fields at the boundary.
+    pub fn encode(&self) -> Result<Vec<u8>, JoinError> {
+        let token = self.token.as_bytes();
+        let name = self.name.as_bytes();
+        if token.len() > MAX_TOKEN_LEN {
+            return Err(JoinError::FieldTooLarge {
+                len: token.len(),
+                max: MAX_TOKEN_LEN,
+            });
+        }
+        if name.len() > MAX_NAME_LEN {
+            return Err(JoinError::FieldTooLarge {
+                len: name.len(),
+                max: MAX_NAME_LEN,
+            });
+        }
+        let mut out = Vec::with_capacity(10 + token.len() + name.len());
+        out.push(KIND_CONNECT);
+        out.push(JOIN_VERSION);
+        out.extend_from_slice(&(token.len() as u16).to_le_bytes());
+        out.extend_from_slice(token);
+        out.extend_from_slice(&self.session_id.to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(name);
+        Ok(out)
+    }
+
+    /// Decodes the frame from `buf` (trailing bytes are ignored).
+    pub fn decode(buf: &[u8]) -> Result<Self, JoinError> {
+        let mut cur = Cursor::new(buf);
+        expect_header(&mut cur, KIND_CONNECT)?;
+        let token = take_str(&mut cur, MAX_TOKEN_LEN)?;
+        let session_id = cur.u32()?;
+        let name = take_str(&mut cur, MAX_NAME_LEN)?;
+        Ok(Self {
+            token,
+            session_id,
+            name,
+        })
+    }
+}
+
+/// The hub's acceptance (kind [`KIND_ACCEPT`]): the client id it assigned.
+///
+/// Wire: `02 | version u8 | client_id u32`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Accept {
+    /// The assigned client id; valid within the joined session.
+    pub client_id: u32,
+}
+
+impl Accept {
+    /// Encodes the frame.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(6);
+        out.push(KIND_ACCEPT);
+        out.push(JOIN_VERSION);
+        out.extend_from_slice(&self.client_id.to_le_bytes());
+        out
+    }
+
+    /// Decodes the frame from `buf` (trailing bytes are ignored).
+    pub fn decode(buf: &[u8]) -> Result<Self, JoinError> {
+        let mut cur = Cursor::new(buf);
+        expect_header(&mut cur, KIND_ACCEPT)?;
+        Ok(Self {
+            client_id: cur.u32()?,
+        })
+    }
+}
+
+/// The hub's refusal (kind [`KIND_REJECT`]): why the join failed.
+///
+/// Wire: `03 | version u8 | reason_len u16 | reason`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reject {
+    /// Human-readable reason, shown by clients as-is.
+    pub reason: String,
+}
+
+impl Reject {
+    /// Encodes the frame.
+    pub fn encode(&self) -> Vec<u8> {
+        let reason = self.reason.as_bytes();
+        let mut out = Vec::with_capacity(4 + reason.len());
+        out.push(KIND_REJECT);
+        out.push(JOIN_VERSION);
+        out.extend_from_slice(&(reason.len() as u16).to_le_bytes());
+        out.extend_from_slice(reason);
+        out
+    }
+
+    /// Decodes the frame from `buf` (trailing bytes are ignored).
+    pub fn decode(buf: &[u8]) -> Result<Self, JoinError> {
+        let mut cur = Cursor::new(buf);
+        expect_header(&mut cur, KIND_REJECT)?;
+        Ok(Self {
+            reason: take_str(&mut cur, MAX_REASON_LEN)?,
+        })
+    }
+}
+
+/// A hub reply: whichever of [`Accept`] or [`Reject`] the hub sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reply {
+    /// The join succeeded.
+    Accepted(Accept),
+    /// The join failed; the reason says why.
+    Rejected(Reject),
+}
+
+impl Reply {
+    /// Decodes either reply kind by inspecting the kind byte.
+    pub fn decode(buf: &[u8]) -> Result<Self, JoinError> {
+        match buf.first() {
+            Some(&KIND_ACCEPT) => Ok(Self::Accepted(Accept::decode(buf)?)),
+            Some(&KIND_REJECT) => Ok(Self::Rejected(Reject::decode(buf)?)),
+            Some(&other) => Err(JoinError::UnknownKind { got: other }),
+            None => Err(JoinError::Truncated { needed: 1, got: 0 }),
+        }
+    }
+}
+
+/// Minimal cursor so frame decoding stays allocation-free and std-only.
+struct Cursor<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], JoinError> {
+        let end = self.pos.checked_add(n).ok_or(JoinError::FieldTooLarge {
+            len: usize::MAX,
+            max: 0,
+        })?;
+        if end > self.buf.len() {
+            return Err(JoinError::Truncated {
+                needed: end,
+                got: self.buf.len(),
+            });
+        }
+        let slice = &self.buf[self.pos..end];
+        self.pos = end;
+        Ok(slice)
+    }
+
+    fn u32(&mut self) -> Result<u32, JoinError> {
+        let b = self.take(4)?;
+        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    fn u16(&mut self) -> Result<u16, JoinError> {
+        let b = self.take(2)?;
+        Ok(u16::from_le_bytes([b[0], b[1]]))
+    }
+}
+
+/// Consumes the shared frame header: kind byte, version byte.
+fn expect_header(cur: &mut Cursor<'_>, want_kind: u8) -> Result<(), JoinError> {
+    let b = cur.take(2)?;
+    if b[0] != want_kind {
+        return Err(JoinError::UnknownKind { got: b[0] });
+    }
+    if b[1] != JOIN_VERSION {
+        return Err(JoinError::UnsupportedVersion {
+            got: b[1],
+            supported: JOIN_VERSION,
+        });
+    }
+    Ok(())
+}
+
+/// Consumes a `u16` length-prefixed UTF-8 string, bounded by `max`.
+fn take_str(cur: &mut Cursor<'_>, max: usize) -> Result<String, JoinError> {
+    let len = cur.u16()? as usize;
+    if len > max {
+        return Err(JoinError::FieldTooLarge { len, max });
+    }
+    let bytes = cur.take(len)?;
+    String::from_utf8(bytes.to_vec()).map_err(|_| JoinError::BadUtf8)
+}
