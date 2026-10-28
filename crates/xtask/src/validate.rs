@@ -29,12 +29,15 @@ pub fn validate_docker_image(root: &Path, tag: &str) -> Result<()> {
     let lobby = free_tcp_port()?;
     let edge = free_udp_port()?;
     let name = format!("netcode-hub-validate-{}", std::process::id());
-    let publish = format!("{lobby}:8080/tcp,{edge}:4433/udp");
+    let tcp = format!("{lobby}:8080/tcp");
+    let udp = format!("{edge}:4433/udp");
 
     run(
         root,
         "docker",
-        &["run", "--rm", "-d", "--name", &name, "-p", &publish, tag],
+        &[
+            "run", "--rm", "-d", "--name", &name, "-p", &tcp, "-p", &udp, tag,
+        ],
     )
     .context("docker run failed")?;
     // The host debug bots judge the image.
