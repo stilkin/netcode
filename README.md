@@ -3,25 +3,26 @@
 One server, many games. A LAN-party game server written in Rust: players join
 from any desktop browser — no install — and the hub routes their packets to
 per-session game-worker processes, one process per running lobby. Adding a new
-game means dropping a new worker binary on the box; the hub itself is never
-rebuilt for new games.
+game means dropping a new worker binary on the box and a config entry; the hub
+itself is never rebuilt for new games.
 
-> **Status:** roadmap changes 1–5 implemented — wire protocol, hub runtime,
-> worker backplane with game SDK, WebTransport client edge, lobby/admin HTTP
-> API, and conformance bots (96 tests, local pre-commit gates). The roadmap
-> is complete; see [docs/roadmap.md](docs/roadmap.md).
+> **Status:** feature-complete — wire protocol, hub runtime, worker backplane
+> with game SDK, WebTransport client edge, lobby/admin HTTP API, conformance
+> bots, and a self-validating local release pipeline. 102 tests, version-
+> controlled commit/push gates, no hosted CI (by decision).
 
 ## What is the project?
 
-The hub is the single long-running service of a LAN party's game infrastructure:
+The hub is the single long-running service of a LAN party's game
+infrastructure:
 
-- it terminates all client connections (desktop browsers over WebTransport —
-  landing in roadmap change 3) and routes packets **opaquely, by header only**
-  — it never parses game payloads;
+- it terminates all client connections (desktop browsers over WebTransport)
+  and routes packets **opaquely, by header only** — it never parses game
+  payloads;
 - it hosts many concurrent sessions (lobbies) of many different game types,
   each simulated by a separate game-worker process on the same machine;
-- it exposes a lobby/admin HTTP API so browsers can discover and join sessions
-  (roadmap change 4).
+- it exposes a lobby/admin HTTP API so browsers discover, create, join, and
+  manage sessions.
 
 Game logic lives exclusively in game workers; game decisions are made
 server-side. Clients stay dumb: connect, send inputs, interpolate snapshots,
@@ -32,26 +33,22 @@ pluggable — is in [docs/architecture.md](docs/architecture.md).
 
 | Layer | Choice |
 |---|---|
-| Language | Rust (edition 2024, stable toolchain) |
+| Language | Rust (edition 2024, stable toolchain ≥ 1.85) |
 | Async runtime | [tokio](https://toki.rs) (multi-thread, signals, timers) |
-| CLI | [clap](https://docs.rs/clap) (derive) |
-| Configuration | [serde](https://serde.rs) + [toml](https://docs.rs/toml) |
-| Logging | [tracing](https://docs.rs/tracing) + tracing-subscriber (`RUST_LOG`) |
-| Errors | [thiserror](https://docs.rs/thiserror) (libraries), [anyhow](https://docs.rs/anyhow) (binary) |
-| Wire codec | hand-rolled, zero-dependency ([spec](crates/protocol/docs/wire-format.md)) |
-| Backplane codec | hand-rolled, zero-dependency ([spec](crates/backplane/docs/backplane-format.md)) |
-| Client transport | [WebTransport](https://docs.rs/wtransport) over QUIC + [rcgen](https://docs.rs/rcgen) self-signed certs (see policy note) |
+| Client transport | WebTransport ([wtransport](https://docs.rs/wtransport)) over QUIC, [rcgen](https://docs.rs/rcgen) self-signed certs (see policy note below) |
 | Lobby API | hand-rolled HTTP/1.1 + [serde_json](https://docs.rs/serde_json) — [OpenAPI](docs/rest_api.yaml) |
+| Wire & backplane codecs | hand-rolled, zero-dependency ([wire format](crates/protocol/docs/wire-format.md) · [backplane format](crates/backplane/docs/backplane-format.md)) |
+| Game SDK | `hub-sdk`: implement a `GameSession` trait, the SDK does all networking |
 | Conformance | `netcode-bots`: protocol-verified headless clients, deterministic fixtures, load smoke profiles |
-| Game SDK | `hub-sdk`: implement `GameSession`, the SDK does all networking |
-| Commit gates | version-controlled pre-commit hook — fmt, clippy `-D warnings`, tests before every commit |
+| CLI / config / logging / errors | [clap](https://docs.rs/clap) · [serde](https://serde.rs) + [toml](https://docs.rs/toml) (strict: typos fail loudly) · [tracing](https://docs.rs/tracing) (`RUST_LOG`) · [thiserror](https://docs.rs/thiserror)/[anyhow](https://docs.rs/anyhow) |
+| Release pipeline | `xtask`: cross-build, package, Docker image, bots-validated — fully local ([runbook](docs/development.md#releasing)) |
+| Gates | `.githooks/pre-commit` + `.githooks/pre-push`: fmt, clippy `-D warnings`, tests |
 | Process | [OpenSpec](https://openspec.dev) spec-driven development ([docs/development.md](docs/development.md)) |
 
-**Policy:** pure-Rust dependencies only — no C/C++ build deps — so Windows
-and Ubuntu build identically with one toolchain, with **one documented
-exception**: the WebTransport transport tree (`wtransport` → quinn → rustls
-→ `ring`), confined to the client edge (change 3). Users receive prebuilt
-artifacts and never compile it. The HTTP layer is planned (roadmap change 4).
+**Dependency policy:** pure-Rust only — no C/C++ build deps — so Windows and
+Ubuntu build identically with one toolchain. **One documented exception:** the
+WebTransport transport tree (`wtransport` → quinn → rustls → `ring`), confined
+to the client edge; users receive prebuilt artifacts and never compile it.
 
 ## Installation
 
@@ -60,37 +57,28 @@ artifacts and never compile it. The HTTP layer is planned (roadmap change 4).
 ```sh
 docker build -t netcode-hub .
 docker run --rm -p 4433:4433/udp -p 8080:8080 netcode-hub
-# open http://localhost:8080/ and click "create Echo Arena"
+# then open http://localhost:8080/ and click "create Echo Arena"
 ```
 
-**Or run a release binary** (static, from the GitHub releases page):
-`hub`, `sample-worker`, and `netcode-bots` in one archive with an example
-`hub.toml` — Linux (musl, fully static) and Windows, plus `SHA256SUMS`.
+**Or run a release binary** (from the GitHub releases page): `hub`,
+`sample-worker`, and `netcode-bots` in one archive with an example
+`hub.toml` — static Linux (musl) and Windows builds, plus `SHA256SUMS`.
 
-**Or build from source.** Prerequisite: a current stable Rust toolchain
-(edition 2024 requires ≥ 1.85):
-
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-Because the WebTransport transport tree compiles `ring` (the one
-documented exception to the pure-Rust rule), source builds also need a C
-compiler: the platform's default toolchain (`gcc`/clang or VS Build
-Tools) — the same one linking requires anyway.
+**Or build from source.** You need a current stable Rust toolchain and a C
+compiler (the platform's default toolchain — `gcc`/clang or VS Build Tools —
+required by `ring` in the transport tree above):
 
 ```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # if needed
 git clone <this-repo> && cd netcode
-cargo build --release          # artifacts in target/release/
+cargo build --release
 ```
-
-There are no other system dependencies.
 
 ## Configuration
 
-The hub reads an optional TOML file (`hub.toml` in the working directory by
-default; override with `--config`). A missing file means all defaults.
-**Unknown keys are rejected** with an error naming the key — typos fail loudly.
+The hub reads an optional TOML file (`hub.toml` in the working directory;
+override with `--config`). A missing file means all defaults. **Unknown keys
+are rejected** with an error naming the key — typos fail loudly.
 
 ```toml
 # hub.toml — all keys optional
@@ -101,12 +89,12 @@ bind = "127.0.0.1:24000"   # loopback by design: trusted control plane
 token = ""                 # shared token workers must present; empty = off
 
 [client_edge]
-bind = "0.0.0.0:4433"        # WebTransport (UDP) — LAN-facing
-token = ""                   # shared token Connect frames must present; empty = open LAN
+bind = "0.0.0.0:4433"      # WebTransport (UDP) — LAN-facing
+token = ""                 # shared token Connect frames must present; empty = open LAN
 
 [lobby]
-bind = "0.0.0.0:8080"        # HTTP: lobby API + cert hash + test page
-token = ""                   # gates mutations; empty = open LAN
+bind = "0.0.0.0:8080"      # HTTP: lobby API + cert hash + test page
+token = ""                 # gates mutations; empty = open LAN
 
 # One entry per installable game: adding a game is a binary + a config entry.
 [[games]]
@@ -118,91 +106,87 @@ worker = "target/debug/sample-worker"
 session_config_json = '{"tick_hz":60}'
 ```
 
-The `RUST_LOG` environment variable always overrides `log_level`.
-
-| Exit code | Meaning |
-|---:|---|
-| 0 | clean stop after Ctrl-C / SIGTERM |
-| 1 | invalid configuration (error names the offending key) |
-| 2 | unexpected fatal error |
-| 130 | second signal received during shutdown (immediate exit) |
+`RUST_LOG` always overrides `log_level`. Exit codes: `0` clean stop after
+Ctrl-C/SIGTERM · `1` invalid configuration (error names the key) · `2` fatal
+error · `130` second signal during shutdown.
 
 ## Running
 
 ```sh
-cargo run -p hub                    # dev run with defaults
-cargo run -p hub -- --config /etc/hub.toml
-hub --version                       # → hub 0.1.0
+cargo run -p hub                        # dev run with defaults
+cargo run -p hub -- --config hub.toml   # explicit config
+hub --version                           # → hub 0.1.0
 ```
 
-The hub binds its backplane listener (`netcode hub starting`, then
-`backplane listening <addr>`) and accepts worker registrations until
-Ctrl-C/SIGTERM for a clean stop. See it end to end:
+At boot the hub binds all three listeners — backplane (loopback TCP),
+client edge (WebTransport/UDP), lobby (HTTP) — and logs each address plus the
+per-boot certificate hash. From a browser, open `http://<host>:8080/`: the
+built-in test page lists the catalog and live sessions, creates a session
+with one click, pins the served certificate hash, and plays echo arena.
+
+Session without the page, manually:
 
 ```sh
-# terminal 1: the hub
-cargo run -p hub
-# terminal 2: a sample game session
-cargo run -p sample-worker -- --backplane 127.0.0.1:24000
-# the hub log now shows: worker registered (session = 1)
+curl -X POST localhost:8080/api/sessions \
+     -H 'Content-Type: application/json' -d '{"game_type":"echo-arena"}'
+# → {"session_id":1}  (the hub spawns and supervises the worker)
 ```
 
-Browsers join over WebTransport: open `http://<host>:8080/` for the built-in
-test client — it lists the game catalog and live sessions, creates sessions
-with one click, fetches the hub's per-boot certificate hash, and plays echo
-arena. The same routes are the documented REST API
-([OpenAPI](docs/rest_api.yaml)): `GET /api/games`, `GET /api/sessions`,
-`POST /api/sessions`, `DELETE /api/sessions/{id}`,
-`DELETE /api/sessions/{id}/clients/{id}`.
+**Conformance / load testing** against a running hub:
 
-## REST API and database
+```sh
+cargo run -p conformance --bin netcode-bots -- run crates/conformance/scenarios/smoke.toml
+```
 
-- **Conformance / load**: `cargo run -p conformance --bin netcode-bots -- run crates/conformance/scenarios/smoke.toml`
-  drives a running hub with protocol-verified bots and exits 0/1; write your
-  own scenarios for bigger profiles.
-- **REST API:** the lobby/admin API ([`docs/rest_api.yaml`](docs/rest_api.yaml))
-  serves the game catalog, session listing/creation/closure, and client kick,
-  plus the cert-hash and test-page routes on the `[lobby]` listener.
+Protocol-verified bots join over WebTransport, drive their scripts, and exit
+0/1 against the scenario's thresholds. Write your own scenarios for bigger
+profiles ([docs/development.md](docs/development.md)).
+
+## REST API & database
+
+- **REST API:** the lobby/admin API is specified in
+  [`docs/rest_api.yaml`](docs/rest_api.yaml) (OpenAPI 3): game catalog,
+  session listing/creation/closure, client kick, plus cert-hash and test-page
+  routes — all on the `[lobby]` listener. A drift-guard test keeps the file
+  honest against the implementation.
 - **Database:** none, by design. Session and game state live in memory in the
-  game-worker processes; persistence is explicitly out of scope for now
+  game-worker processes; persistence is explicitly out of scope
   ([docs/roadmap.md](docs/roadmap.md)).
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | system design, components, design invariants |
-| [docs/roadmap.md](docs/roadmap.md) | planned changes, statuses, out-of-scope list |
-| [docs/development.md](docs/development.md) | spec-driven workflow, repo conventions, local checks |
-| [crates/protocol/docs/wire-format.md](crates/protocol/docs/wire-format.md) | client-packet header byte layout (protocol v1) |
-| [crates/backplane/docs/backplane-format.md](crates/backplane/docs/backplane-format.md) | hub-to-worker frame layout (backplane v1) |
+| [docs/architecture.md](docs/architecture.md) | system design, component map, design invariants |
+| [docs/development.md](docs/development.md) | spec-driven workflow, conventions, gates, release runbook |
+| [docs/roadmap.md](docs/roadmap.md) | change history, out-of-scope list |
+| [docs/rest_api.yaml](docs/rest_api.yaml) | lobby/admin API (OpenAPI 3) |
+| [crates/protocol/docs/wire-format.md](crates/protocol/docs/wire-format.md) | client-packet header + join-frame byte layouts (protocol v1) |
+| [crates/backplane/docs/backplane-format.md](crates/backplane/docs/backplane-format.md) | hub↔worker frame layout (backplane v1) |
 | [openspec/specs/](openspec/specs/) | behavioral specs — the source of truth per capability |
 
 ## Releasing (maintainers)
 
-One command, fully local (no hosted CI by decision):
+One command, fully local — the release **validates itself** with the
+conformance bots before anything is published:
 
 ```sh
-cargo run -p xtask -- release            # preflight → build → package → image → bots-validate
-cargo run -p xtask -- release --publish  # additionally: git tag, gh release, docker push
+cargo run -p xtask -- release [--publish]
 ```
 
-The release **validates itself**: the freshly built hub is booted and the
-conformance bots must pass their smoke scenario against it before anything
-is published. Cross-builds need `musl-tools` and `mingw-w64`; preflight
-names anything missing with install hints.
+See the [release runbook](docs/development.md#releasing) for the full flow
+(preflight, cross-builds, packaging, Docker image, self-validation,
+publishing).
 
 ## Contributing / development
 
 ```sh
-cargo test --workspace                              # all tests
-cargo fmt --all -- --check                          # gate: formatting
-cargo clippy --workspace --all-targets -- -D warnings  # gate: lints
+cargo test --workspace                                  # 102 tests
+cargo fmt --all -- --check                              # gate: formatting
+cargo clippy --workspace --all-targets -- -D warnings   # gate: lints
 ```
 
-A version-controlled pre-commit hook (`.githooks/pre-commit`) runs the same
-gates before every commit — activate once per clone with
-`git config core.hooksPath .githooks`.
-
-Changes to behavior go through the spec workflow described in
-[docs/development.md](docs/development.md) — requirements first, then code.
+Activate the version-controlled hooks once per clone —
+`git config core.hooksPath .githooks` — and behavior changes go through the
+spec workflow in [docs/development.md](docs/development.md): requirements
+first, then code.

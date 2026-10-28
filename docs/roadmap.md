@@ -13,6 +13,12 @@ green. See [development.md](development.md) for the workflow.
 | 4 | `add-lobby-admin-api` | ✅ implemented (2026-10-28) | HTTP JSON API: list games/sessions, create/close session, kick client; session metadata for directory UIs. An OpenAPI 3 file (`docs/rest_api.yaml`) ships with it | `lobby-api` |
 | 5 | `add-conformance-bots` | ✅ implemented (2026-10-28) | Headless bot client, deterministic scripted-run stream fixtures, load smoke profile (N bots × M sessions) | `conformance` |
 
+## Post-roadmap changes
+
+| Change | Status | Scope |
+|---|---|---|
+| `add-release-artifacts` | ✅ implemented (2026-10-28) | Local release pipeline: `xtask` (cross-builds, packaging, checksums), `FROM scratch` Docker image, bots-driven artifact self-validation, `gh release`/`docker push` publishing, pre-push gate |
+
 ## Deliberately out of scope (for now)
 
 - **Direct-connect mode** — the hub stepping out of the packet path for extreme

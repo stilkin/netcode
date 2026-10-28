@@ -45,25 +45,25 @@ client socket.
 
 | Component | What it does |
 |---|---|
-| [`crates/protocol`](../crates/protocol/) | The shared packet header codec — the entire interoperability contract. std-only so it can also be embedded in `wasm32` browser clients later. Pinned by golden vectors. |
-| [`crates/hub`](../crates/hub/) | The `hub` binary: TOML configuration (strict), `tracing` logging, graceful shutdown (bounded drain, impatient second signal), `--version`. Verified by an end-to-end boot/SIGINT test. |
-| conformance (`crates/conformance`) | `netcode-bots`: headless protocol-verified WebTransport clients, a TOML scenario runner with thresholds and JSON reports, deterministic fixtures (logical ordering, loss-bounded), and load smoke profiles with stall isolation. Hub-free by design — it judges from outside. |
-| lobby API (`hub::lobby`) | The HTTP surface: game catalog, session listing/creation/closure, client kick, token gate, and the absorbed cert-hash + test-page routes. Hand-rolled HTTP/1.1 + JSON; documented in `docs/rest_api.yaml`. Verified end-to-end against the real sample worker. |
-| client edge (`hub::client_edge`) | The browser-facing WebTransport endpoint: per-boot ECDSA P-256 certificate pinned by SHA-256 hash, join handshake (`Connect`/`Accept`/`Reject`), state ⇄ datagrams / events ⇄ control-stream relay with per-connection backpressure, bootstrap endpoint (cert hash + test page). Verified end-to-end by a hash-pinned WT client against a spawned worker. |
+| [`crates/protocol`](../crates/protocol/) | The shared packet header + join-frame codecs — the interoperability contract. std-only so it can also be embedded in `wasm32` browser clients later. Pinned by golden vectors. |
+| [`crates/backplane`](../crates/backplane/) | The hub↔worker wire protocol over loopback TCP: framing, registration, notifications, routing, liveness. Payload-blind opcodes; [format spec](../crates/backplane/docs/backplane-format.md). |
+| [`crates/hub`](../crates/hub/) | The `hub` binary and library: strict TOML configuration, session registry, backplane service (auth, routing, fan-out, watchdog), worker spawn/supervision, the client edge, and the lobby API. Graceful shutdown with bounded drain; exit codes are part of the contract. |
+| [`crates/hub-sdk`](../crates/hub-sdk/) | The crate game developers build against: implement a `GameSession` trait (`on_attach` / `on_detach` / `tick`), never touch transports. |
+| [`crates/sample-worker`](../crates/sample-worker/) | Echo arena — the reference game and integration-test fixture. |
+| client edge (`hub::client_edge`) | The browser-facing WebTransport endpoint: per-boot ECDSA P-256 certificate pinned by SHA-256 hash, join handshake (`Connect`/`Accept`/`Reject`), state ⇄ datagrams / events ⇄ control-stream relay with per-connection backpressure and a stall watermark. |
+| lobby API (`hub::lobby`) | The HTTP surface: game catalog (`[[games]]`), session listing/creation/closure, client kick, token gate on mutations, and the cert-hash + test-page routes. Hand-rolled HTTP/1.1 + JSON; documented in [rest_api.yaml](rest_api.yaml). |
+| [`crates/conformance`](../crates/conformance/) | `netcode-bots`: headless protocol-verified WebTransport clients, a TOML scenario runner with thresholds and JSON reports, deterministic fixtures (logical ordering, loss-bounded), and load smoke profiles with stall isolation. Hub-free by design — it judges from outside. |
+| [`crates/xtask`](../crates/xtask/) | The local release pipeline: cross-builds, packaging + checksums, the Docker image, and bots-driven artifact self-validation. No hosted CI, by decision. |
 
-### Planned (see the [roadmap](roadmap.md))
-
-| Component | What it does |
-|---|---|
-| backplane | Loopback-TCP link between hub and workers: register, attach clients, route, broadcast, heartbeat. Payload-blind routing opcodes. |
-| `hub-sdk` | The crate game developers build against: implement a `GameSession` trait (`join` / `leave` / `tick`), never touch transports. |
-| conformance | Headless bot client + deterministic recorded streams + load profile. |
+Nothing is currently planned beyond the out-of-scope list in the
+[roadmap](roadmap.md); future work (direct-connect mode, native UDP
+clients, a directory UI) is deliberately deferred until needed.
 
 ## Cross-cutting rules
 
-- **Version everything that crosses a boundary.** The header carries `version`
-  and `payload_schema_version`; the backplane and admin API get the same
-  treatment when they land.
+- **Version everything that crosses a boundary.** The packet header carries
+  `version` and `payload_schema_version`; the backplane protocol and the
+  lobby API carry versions of their own.
 - **Golden vectors are the wire contract.** Changing one is a deliberate
   protocol-evolution decision, never a refactoring side effect.
 - **Unknown is rejected at the boundary.** Unknown config keys fail startup;

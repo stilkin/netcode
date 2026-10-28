@@ -117,11 +117,14 @@ cargo install cargo-llvm-cov            # once; also: rustup component add llvm-
 cargo llvm-cov --workspace --summary-only   # add --html for a browsable report
 ```
 
-Current state (post-change-5): ~90% line coverage overall; `crates/protocol`
-is at ~97% (the header codec itself at 100% lines), `registry` ~99%,
-`client_edge` ~91%, `lobby` ~92%, `conformance` ~82% (bot join-error and
-timeout branches are deliberately unchased; the `netcode-bots` binary is
-thin glue). The uncovered remainder is dominated
+Current state (post-release-pipeline): product crates measure ~89% line
+coverage (`cargo llvm-cov -p hub -p protocol -p backplane -p hub-sdk -p
+sample-worker -p conformance --summary-only`); `registry` and the protocol
+header codec are at 100% lines. `conformance` sits lower — bot join-error
+and timeout branches are deliberately unchased, and its `netcode-bots`
+binary is thin glue. `xtask` is excluded from the number by convention: it
+is release glue (process-driving code) whose proof is the release
+rehearsal, not unit tests. The uncovered remainder is dominated
 by branches deliberately not chased with contrived tests: OS-specific signal
 fallbacks, the impatient second-signal exit (130), fatal-exit mapping, SDK
 connection-failure error paths, and join-frame decode error arms. Re-measure
