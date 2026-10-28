@@ -226,6 +226,43 @@ async fn read_exact(stream: &mut wtransport::RecvStream, buf: &mut [u8]) {
         .expect("stream has the bytes");
 }
 
+/// A peer that completes QUIC but deliberately never starts WebTransport.
+/// The endpoint must stay alive alongside the connection.
+struct StalledQuic {
+    _endpoint: quinn::Endpoint,
+    _connection: quinn::Connection,
+}
+
+async fn stall_before_webtransport(edge: &EdgeHandle) -> StalledQuic {
+    let verifier =
+        wtransport::tls::client::ServerHashVerification::new([wtransport::tls::Sha256Digest::new(
+            edge.cert_sha256(),
+        )]);
+    let tls = wtransport::tls::client::build_default_tls_config(
+        std::sync::Arc::new(wtransport::tls::build_native_cert_store()),
+        Some(std::sync::Arc::new(verifier)),
+    );
+    let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
+        .expect("WebTransport TLS is QUIC-compatible");
+    let config = quinn::ClientConfig::new(std::sync::Arc::new(crypto));
+    let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().expect("bind address"))
+        .expect("raw QUIC client endpoint");
+    endpoint.set_default_client_config(config);
+    let connection = tokio::time::timeout(
+        Duration::from_secs(3),
+        endpoint
+            .connect(edge.edge_addr(), "localhost")
+            .expect("raw QUIC connect"),
+    )
+    .await
+    .expect("QUIC connection completes before WebTransport stalls")
+    .expect("QUIC connection");
+    StalledQuic {
+        _endpoint: endpoint,
+        _connection: connection,
+    }
+}
+
 impl Client {
     /// Sends a state-channel input as a datagram.
     async fn send_input(&self, payload: &[u8]) {
@@ -393,6 +430,32 @@ async fn garbage_first_frame_closes_the_connection() {
     rig.stop().await;
 }
 
+/// (client-edge: Connection admission isolation) A peer stalled before the
+/// WebTransport session request must not serialize every other peer behind it.
+#[tokio::test]
+async fn stalled_negotiation_does_not_block_joins() {
+    let rig = start("").await;
+    let (session, mut wrd, _wwr) = active_session(&rig, 8).await;
+
+    let stalled = stall_before_webtransport(&rig.edge).await;
+    // Let the edge accept the raw QUIC peer and enter its negotiation wait.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let client = match join(&rig.edge, session, "healthy", "").await {
+        Join::Ok(client) => client,
+        Join::Rejected(reason) => panic!("healthy client must join: {reason}"),
+    };
+    match next_frame(&mut wrd).await {
+        Frame::ClientAttached { client_id } => assert_eq!(client_id, client.client_id),
+        other => panic!("expected ClientAttached, got {other:?}"),
+    }
+
+    tokio::time::timeout(Duration::from_secs(5), rig.stop())
+        .await
+        .expect("edge drains with the stalled peer still present");
+    drop(stalled);
+}
+
 /// (client-edge: State relay over datagrams) Inputs flow client → worker as
 /// FromClient and worker unicast/broadcast flow back as datagrams.
 #[tokio::test]
@@ -529,6 +592,54 @@ async fn slow_reader_stalls_only_itself() {
             other => panic!("expected FromClient, got {other:?}"),
         }
     }
+
+    rig.stop().await;
+}
+
+/// (client-edge: Inbound stream bounds) Invalid incomplete data cannot grow
+/// the relay buffer forever or affect another client's session.
+#[tokio::test]
+async fn unframed_stream_flood_closes_only_that_client() {
+    let rig = start("").await;
+    let (session, mut wrd, _wwr) = active_session(&rig, 8).await;
+
+    let mut bad = match join(&rig.edge, session, "bad", "").await {
+        Join::Ok(client) => client,
+        Join::Rejected(reason) => panic!("bad client must join: {reason}"),
+    };
+    let healthy = match join(&rig.edge, session, "healthy", "").await {
+        Join::Ok(client) => client,
+        Join::Rejected(reason) => panic!("healthy client must join: {reason}"),
+    };
+    for _ in 0..2 {
+        match next_frame(&mut wrd).await {
+            Frame::ClientAttached { .. } => {}
+            other => panic!("expected ClientAttached, got {other:?}"),
+        }
+    }
+
+    let garbage = vec![0u8; 256 * 1024 + 1];
+    tokio::time::timeout(Duration::from_secs(5), bad.writer.write_all(&garbage))
+        .await
+        .expect("flood write completes")
+        .expect("flood reaches the hub");
+    tokio::time::timeout(Duration::from_secs(3), bad.conn.closed())
+        .await
+        .expect("over-limit connection closes");
+    match next_frame(&mut wrd).await {
+        Frame::ClientDetached { client_id } => assert_eq!(client_id, bad.client_id),
+        other => panic!("expected ClientDetached, got {other:?}"),
+    }
+
+    healthy.send_input(b"still alive").await;
+    match next_frame(&mut wrd).await {
+        Frame::FromClient { packet } => {
+            let (_, payload) = Header::split_packet(&packet).expect("packet");
+            assert_eq!(payload, b"still alive");
+        }
+        other => panic!("expected healthy FromClient, got {other:?}"),
+    }
+    assert_eq!(poll_player_count(&rig, session, 1).await, 1);
 
     rig.stop().await;
 }

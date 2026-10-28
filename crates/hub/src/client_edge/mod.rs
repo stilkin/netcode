@@ -34,6 +34,10 @@ const CHANNEL_EVENTS: u8 = 1;
 /// bounded memory per connection without a second policy engine.
 const STALL_WATERMARK: usize = 1024;
 
+/// Largest incomplete client-to-hub stream buffer. A maximal valid packet is
+/// about 128 KiB, so this leaves ample room for fragmentation.
+const MAX_STREAM_BUF: usize = 256 * 1024;
+
 /// Grace for connection tasks to observe shutdown and exit.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -164,7 +168,7 @@ impl ServiceHandle {
     }
 }
 
-/// The accept loop: one task per connection, a bootstrap task, shutdown-aware.
+/// The accept loop: one supervised task per peer, shutdown-aware.
 async fn run(
     server: Endpoint<wtransport::endpoint::endpoint_side::Server>,
     cfg: ClientEdgeConfig,
@@ -176,25 +180,14 @@ async fn run(
     loop {
         tokio::select! {
             incoming = server.accept() => {
-                // IncomingSession → SessionRequest → Connection.
-                match incoming.await {
-                    Ok(request) => match request.accept().await {
-                        Ok(conn) => {
-                            tasks.spawn(handle_connection(
-                                conn,
-                                cfg.clone(),
-                                backplane.clone(),
-                                shutdown_rx.clone(),
-                            ));
-                        }
-                        Err(err) => {
-                            debug!(%err, "client session failed to establish");
-                        }
-                    },
-                    Err(err) => {
-                        debug!(%err, "client connection failed");
+                let cfg = cfg.clone();
+                let backplane = backplane.clone();
+                let mut peer_shutdown = shutdown_rx.clone();
+                tasks.spawn(async move {
+                    if let Some(conn) = establish(incoming, &mut peer_shutdown).await {
+                        handle_connection(conn, cfg, backplane, peer_shutdown).await;
                     }
-                }
+                });
             }
             // Only reap when something can finish; an empty JoinSet's
             // join_next is immediately ready and would busy-loop.
@@ -205,6 +198,34 @@ async fn run(
 
     // Stop accepting; let connection tasks observe shutdown and finish.
     while tasks.join_next().await.is_some() {}
+}
+
+/// IncomingSession → SessionRequest → Connection, without occupying the
+/// accept loop or outliving shutdown while negotiation is incomplete.
+async fn establish(
+    incoming: wtransport::endpoint::IncomingSession,
+    shutdown: &mut watch::Receiver<bool>,
+) -> Option<Connection> {
+    let request = tokio::select! {
+        result = incoming.into_future() => match result {
+            Ok(request) => request,
+            Err(err) => {
+                debug!(%err, "client connection failed");
+                return None;
+            }
+        },
+        _ = shutdown.changed() => return None,
+    };
+    tokio::select! {
+        result = request.accept() => match result {
+            Ok(conn) => Some(conn),
+            Err(err) => {
+                debug!(%err, "client session failed to establish");
+                None
+            }
+        },
+        _ = shutdown.changed() => None,
+    }
 }
 
 /// One accepted client connection: handshake, then relay until either side
@@ -361,6 +382,10 @@ async fn relay(
                         if inbound_tx.send(Ok(packet)).is_err() {
                             return;
                         }
+                    }
+                    if stream_buf.len() > MAX_STREAM_BUF {
+                        let _ = inbound_tx.send(Err(()));
+                        return;
                     }
                 }
                 Ok(None) => {

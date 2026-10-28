@@ -412,3 +412,34 @@ async fn documented_routes_answer() {
 
     rig.stop().await;
 }
+
+/// (lobby-api: Request deadline) An incomplete request cannot hold its task
+/// and socket forever, and its expiry does not affect later requests.
+#[tokio::test(start_paused = true)]
+async fn incomplete_request_times_out_without_blocking_others() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let rig = start("", vec![]).await;
+    let mut slow = tokio::net::TcpStream::connect(rig.lobby.addr())
+        .await
+        .expect("connect slow request");
+    slow.write_all(b"GET /api/games HTTP/1.1\r\nHost: hub\r\n")
+        .await
+        .expect("partial request head");
+
+    // Let the accept loop spawn the request task before advancing its clock.
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(31)).await;
+    tokio::task::yield_now().await;
+    let mut response = Vec::new();
+    match tokio::time::timeout(Duration::from_secs(1), slow.read_to_end(&mut response)).await {
+        Ok(Ok(0)) => assert!(response.is_empty()),
+        other => panic!("slow request must end at the deadline: {other:?}"),
+    }
+
+    let (status, body) = http(rig.lobby.addr(), "GET", "/api/games", None, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "[]");
+
+    rig.stop().await;
+}

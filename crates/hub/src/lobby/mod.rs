@@ -29,6 +29,9 @@ use crate::spawn::SpawnRequest;
 /// Largest request (head + body) we tolerate before giving up.
 const MAX_REQUEST: usize = 64 * 1024;
 
+/// Total time allowed for one request, including a trickled head or body.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// A bound lobby service, ready to start.
 pub struct Service {
     listener: TcpListener,
@@ -78,8 +81,10 @@ impl Service {
                         let Ok((stream, _)) = accepted else { continue };
                         let state = state.clone();
                         tokio::spawn(async move {
-                            if let Err(err) = serve_one(stream, state).await {
-                                warn!(%err, "lobby request failed");
+                            match tokio::time::timeout(REQUEST_TIMEOUT, serve_one(stream, state)).await {
+                                Ok(Ok(())) => {}
+                                Ok(Err(err)) => warn!(%err, "lobby request failed"),
+                                Err(_) => warn!("lobby request timed out"),
                             }
                         });
                     }

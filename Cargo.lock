@@ -545,6 +545,7 @@ dependencies = [
  "clap",
  "libc",
  "protocol",
+ "quinn",
  "rcgen",
  "serde",
  "serde_json",
