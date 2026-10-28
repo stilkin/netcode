@@ -59,12 +59,18 @@ fn set_version(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The workspace root, from this crate's location.
+/// The workspace root: the nearest ancestor directory whose manifest
+/// declares a workspace. Robust to the crate's position within it.
 pub fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crate dir has a parent")
-        .to_path_buf()
+    let start = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for dir in start.ancestors().skip(1) {
+        if let Ok(manifest) = std::fs::read_to_string(dir.join("Cargo.toml"))
+            && manifest.contains("[workspace]")
+        {
+            return dir.to_path_buf();
+        }
+    }
+    panic!("no workspace manifest above {}", start.display());
 }
 
 /// Tiny semver shape check without pulling a semver crate.
