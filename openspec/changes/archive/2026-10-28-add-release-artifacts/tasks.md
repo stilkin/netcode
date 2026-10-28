@@ -36,4 +36,4 @@ Each section names the requirements it implements.
 
 ## 8. Wrap-up
 - [x] 8.1 `openspec validate add-release-artifacts --strict` green; full workspace gate green (fmt, clippy `-D warnings`, tests).
-- [ ] 8.2 Archive the change, commit; a real local release rehearsal (no `--publish`) proving the pipeline end to end on this machine.
+- [x] 8.2 Archive the change, commit; a real local release rehearsal (no `--publish`) proving the pipeline end to end on this machine.
