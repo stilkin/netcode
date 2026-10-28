@@ -4,7 +4,7 @@
 //! results to the rest of the system through channels (see
 //! `backplane_service`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use thiserror::Error;
 
@@ -13,6 +13,9 @@ pub type ClientId = u32;
 
 /// Id 0 means "no claim" in registration frames; it is never assigned.
 const FIRST_ID: u32 = 1;
+
+/// Number of recently closed sessions whose metadata remains available.
+const CLOSED_HISTORY_LIMIT: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
@@ -75,6 +78,7 @@ pub struct Registry {
     next_session_id: u32,
     next_client_id: u32,
     sessions: HashMap<SessionId, SessionEntry>,
+    closed_order: VecDeque<SessionId>,
 }
 
 impl Registry {
@@ -83,6 +87,7 @@ impl Registry {
             next_session_id: FIRST_ID,
             next_client_id: FIRST_ID,
             sessions: HashMap::new(),
+            closed_order: VecDeque::new(),
         }
     }
 
@@ -179,7 +184,8 @@ impl Registry {
 
     /// Closes a session in any state; returns the ids of clients that were
     /// attached (and must now be dropped by the caller). Idempotent: closing
-    /// a closed session returns `None`.
+    /// a closed session returns `None`. The oldest tombstone is evicted when
+    /// the closed history exceeds its cap.
     pub fn close(&mut self, id: SessionId) -> Option<Vec<ClientId>> {
         let entry = self.sessions.get_mut(&id)?;
         if entry.info.state == SessionState::Closed {
@@ -187,7 +193,17 @@ impl Registry {
         }
         entry.info.state = SessionState::Closed;
         entry.info.player_count = 0;
-        Some(std::mem::take(&mut entry.client_ids))
+        let clients = std::mem::take(&mut entry.client_ids);
+
+        self.closed_order.push_back(id);
+        while self.closed_order.len() > CLOSED_HISTORY_LIMIT {
+            let evicted = self
+                .closed_order
+                .pop_front()
+                .expect("overflow has an oldest");
+            self.sessions.remove(&evicted);
+        }
+        Some(clients)
     }
 
     /// Ids of the clients currently attached to an active session, in
@@ -295,6 +311,65 @@ mod tests {
         assert_eq!(detached.len(), 1);
         assert_eq!(registry.close(id), None, "second close is a no-op");
         assert_eq!(registry.attach(id, "p2"), Err(AttachError::NotJoinable(id)));
+    }
+
+    /// (session-registry: Closed session history) Overflow evicts only the
+    /// oldest tombstone; live sessions and newer tombstones remain.
+    #[test]
+    fn closed_history_is_bounded_and_evicts_oldest() {
+        let mut registry = Registry::new();
+        let open = registry.create_pending(&spec());
+        let mut closed = Vec::new();
+        for _ in 0..=CLOSED_HISTORY_LIMIT {
+            let id = registry.create_pending(&spec());
+            registry.close(id);
+            closed.push(id);
+        }
+
+        let oldest = closed[0];
+        let newest = *closed.last().expect("newest closed id");
+        assert!(registry.get(oldest).is_none(), "oldest was evicted");
+        assert_eq!(
+            registry.attach(oldest, "p"),
+            Err(AttachError::NotFound(oldest))
+        );
+        assert_eq!(
+            registry.get(newest).expect("newest tombstone").state,
+            SessionState::Closed
+        );
+        assert_eq!(
+            registry.attach(newest, "p"),
+            Err(AttachError::NotJoinable(newest))
+        );
+        assert_eq!(
+            registry.get(open).expect("open session remains").state,
+            SessionState::Pending
+        );
+        assert_eq!(
+            registry.sessions.len(),
+            CLOSED_HISTORY_LIMIT + 1,
+            "closed entries plus the open session"
+        );
+
+        let next = registry.create_pending(&spec());
+        assert!(next > newest, "evicted ids are never reused");
+    }
+
+    /// (session-registry: Closed session history) An idempotent close does
+    /// not enqueue another copy and eventually evict the tombstone itself.
+    #[test]
+    fn repeated_close_does_not_consume_history() {
+        let mut registry = Registry::new();
+        let id = registry.register_self(&spec());
+        registry.close(id).expect("first close");
+        for _ in 0..=CLOSED_HISTORY_LIMIT {
+            assert_eq!(registry.close(id), None);
+        }
+        assert_eq!(
+            registry.get(id).expect("tombstone remains").state,
+            SessionState::Closed
+        );
+        assert_eq!(registry.attach(id, "p"), Err(AttachError::NotJoinable(id)));
     }
 
     /// (session-registry: Unique session ids)
