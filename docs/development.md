@@ -66,15 +66,47 @@ signal handling and gated tests, which keeps the surface small).
 
 ## Git hooks
 
-A pre-commit hook runs the same gates as CI (fmt, clippy, tests) before every
-commit. It is version-controlled at `.githooks/pre-commit` and activated once
-per clone:
+Two version-controlled hooks run the same gates (fmt, clippy, tests):
+
+- `.githooks/pre-commit` — before every commit.
+- `.githooks/pre-push` — before every push, so a `git commit --no-verify`
+  bypass cannot reach other people unnoticed.
+
+Both activate once per clone:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-Work-in-progress escape hatch: `git commit --no-verify` (CI still runs).
+Work-in-progress escape hatches remain: `git commit --no-verify` and
+`git push --no-verify` — the contract is "breakage does not reach others
+unnoticed", not "you cannot rush locally".
+
+## Releasing
+
+The release pipeline is fully local (no hosted CI, by owner decision):
+
+```sh
+cargo run -p xtask -- preflight                # what is missing on this machine?
+cargo run -p xtask -- set-version 0.2.0        # bump + commit
+cargo run -p xtask -- release                  # build, package, image, self-validate
+cargo run -p xtask -- release --publish        # + git tag, gh release, docker push
+```
+
+Flow: preflight (clean tree, toolchain probes with install hints) →
+cross-build (musl + mingw; `--skip-linux`/`--skip-windows` on partial
+machines) → package (archives + SHA256SUMS under
+`target/release-artifacts/<version>/`) → Docker image (`--skip-docker`
+without docker) → **self-validation**: the built hub boots and the
+conformance bots' smoke scenario must pass against it — a failing smoke
+fails the release → optional `cargo audit` (skipped loudly when not
+installed) → publish, only with `--publish`. `gh release` and ghcr.io are
+artifact hosting, not CI.
+
+On a machine without cross toolchains, the docker path still rehearses the
+whole pipeline: `cargo run -p xtask -- release --skip-linux --skip-windows`
+builds and validates the image (the image compiles musl inside the
+container).
 
 ## Coverage
 

@@ -41,9 +41,12 @@ traces to a requirement. Full workflow and conventions:
 
 ## Gates
 
-The pre-commit hook (`.githooks/pre-commit`) is the enforcement point — there is
-no hosted CI. Activate it once per clone: `git config core.hooksPath .githooks`.
-WIP escape hatch: `git commit --no-verify`.
+The hooks are the enforcement point — there is no hosted CI. Activate once per
+clone: `git config core.hooksPath .githooks` (both `pre-commit` and `pre-push`
+live in `.githooks/`). The push gate closes the `--no-verify` commit bypass;
+`git push --no-verify` remains for deliberate WIP. Releases:
+`cargo run -p xtask -- release` (self-validates with the bots; see
+docs/development.md).
 
 ```sh
 cargo fmt --all -- --check                             # formatting
@@ -91,4 +94,5 @@ docs/                  architecture · roadmap · development
   skeleton ahead of need is a design smell here.
 - Status (2026-10): roadmap complete — changes 1–5 implemented (wire
   protocol, hub runtime, backplane + SDK + sample worker, WebTransport
-  client edge, lobby/admin HTTP API, conformance bots).
+  client edge, lobby/admin HTTP API, conformance bots) plus the local
+  release pipeline (xtask + Docker image + push gates).

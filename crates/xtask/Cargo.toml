@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Release tooling, not shipped: run with `cargo run -p xtask -- <cmd>`.
+
+[dependencies]
+anyhow = { workspace = true }
+flate2 = "1"
+sha2 = { workspace = true }
+tar = "0.4"
+toml_edit = "0.23"
+zip = { version = "9", default-features = false, features = ["deflate"] }

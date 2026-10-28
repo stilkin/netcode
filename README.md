@@ -55,26 +55,36 @@ artifacts and never compile it. The HTTP layer is planned (roadmap change 4).
 
 ## Installation
 
-Prerequisite: a current stable Rust toolchain (edition 2024 requires ≥ 1.85):
+**Run it with docker** (lowest entry bar — no toolchain at all):
+
+```sh
+docker build -t netcode-hub .
+docker run --rm -p 4433:4433/udp -p 8080:8080 netcode-hub
+# open http://localhost:8080/ and click "create Echo Arena"
+```
+
+**Or run a release binary** (static, from the GitHub releases page):
+`hub`, `sample-worker`, and `netcode-bots` in one archive with an example
+`hub.toml` — Linux (musl, fully static) and Windows, plus `SHA256SUMS`.
+
+**Or build from source.** Prerequisite: a current stable Rust toolchain
+(edition 2024 requires ≥ 1.85):
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Build from source:
+Because the WebTransport transport tree compiles `ring` (the one
+documented exception to the pure-Rust rule), source builds also need a C
+compiler: the platform's default toolchain (`gcc`/clang or VS Build
+Tools) — the same one linking requires anyway.
 
 ```sh
 git clone <this-repo> && cd netcode
 cargo build --release          # artifacts in target/release/
 ```
 
-Or install the binary onto your PATH:
-
-```sh
-cargo install --path crates/hub   # provides the `hub` command
-```
-
-There are no system dependencies to install.
+There are no other system dependencies.
 
 ## Configuration
 
@@ -167,6 +177,20 @@ arena. The same routes are the documented REST API
 | [crates/protocol/docs/wire-format.md](crates/protocol/docs/wire-format.md) | client-packet header byte layout (protocol v1) |
 | [crates/backplane/docs/backplane-format.md](crates/backplane/docs/backplane-format.md) | hub-to-worker frame layout (backplane v1) |
 | [openspec/specs/](openspec/specs/) | behavioral specs — the source of truth per capability |
+
+## Releasing (maintainers)
+
+One command, fully local (no hosted CI by decision):
+
+```sh
+cargo run -p xtask -- release            # preflight → build → package → image → bots-validate
+cargo run -p xtask -- release --publish  # additionally: git tag, gh release, docker push
+```
+
+The release **validates itself**: the freshly built hub is booted and the
+conformance bots must pass their smoke scenario against it before anything
+is published. Cross-builds need `musl-tools` and `mingw-w64`; preflight
+names anything missing with install hints.
 
 ## Contributing / development
 

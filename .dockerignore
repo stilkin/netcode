@@ -1,0 +1,8 @@
+target
+.git
+.githooks
+.claude
+.opencode
+openspec
+docs
+*.md

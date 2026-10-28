@@ -1,0 +1,17 @@
+# Default configuration for the container image: the hub, its co-installed
+# sample worker, and LAN-facing listeners. Mount your own hub.toml at
+# /hub.toml (or set the workdir) to customize.
+
+[client_edge]
+bind = "0.0.0.0:4433"     # WebTransport (browsers, UDP)
+
+[lobby]
+bind = "0.0.0.0:8080"     # HTTP: lobby API, cert hash, test page
+
+[[games]]
+game_type = "echo-arena"
+display_name = "Echo Arena"
+max_players = 8
+payload_schema_version = 1
+worker = "/sample-worker"
+session_config_json = '{"tick_hz":60}'
