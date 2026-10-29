@@ -136,6 +136,24 @@ async fn next_frame(rd: &mut Rd) -> Frame {
         .expect("frame parses")
 }
 
+/// Accepted inputs may precede the detach when a flooding client is closed.
+async fn wait_for_detach(rd: &mut Rd, client_id: u32) {
+    let wait = async {
+        loop {
+            match next_frame(rd).await {
+                Frame::ClientDetached { client_id: got } if got == client_id => break,
+                Frame::ClientDetached { client_id: got } => {
+                    panic!("expected detach for {client_id}, got {got}")
+                }
+                _ => {}
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), wait)
+        .await
+        .expect("client detach in time");
+}
+
 fn packet(channel: u8, session: u32, client: u32, payload: &[u8]) -> Vec<u8> {
     Header::new(channel, session, client, 1, payload.len() as u32)
         .encode_packet(payload)
@@ -602,6 +620,155 @@ async fn slow_reader_stalls_only_itself() {
         }
     }
 
+    rig.stop().await;
+}
+
+/// (client-edge: Event relay over the control stream) Fragmented input
+/// survives datagram and worker branches winning the relay select.
+#[tokio::test]
+async fn fragmented_stream_input_survives_competing_relay_traffic() {
+    let rig = start("").await;
+    let (session, mut wrd, mut wwr) = active_session(&rig, 8).await;
+    let mut client = match join(&rig.edge, session, "fragmented", "").await {
+        Join::Ok(client) => client,
+        Join::Rejected(reason) => panic!("client must join: {reason}"),
+    };
+    match next_frame(&mut wrd).await {
+        Frame::ClientAttached { .. } => {}
+        other => panic!("expected ClientAttached, got {other:?}"),
+    }
+
+    let event = packet(
+        CHANNEL_EVENTS,
+        session,
+        client.client_id,
+        b"fragmented event",
+    );
+    let (first, rest) = event.split_at(7);
+    let (second, third) = rest.split_at(11);
+    client
+        .writer
+        .write_all(first)
+        .await
+        .expect("first fragment");
+
+    client.send_input(b"between fragments").await;
+    match next_frame(&mut wrd).await {
+        Frame::FromClient { packet } => {
+            let (_, payload) = Header::split_packet(&packet).expect("datagram");
+            assert_eq!(payload, b"between fragments");
+        }
+        other => panic!("expected datagram FromClient, got {other:?}"),
+    }
+
+    client
+        .writer
+        .write_all(second)
+        .await
+        .expect("second fragment");
+    conn::write_frame(
+        &mut wwr,
+        &Frame::ToClient {
+            packet: packet(CHANNEL_STATE, session, client.client_id, b"worker tick"),
+        },
+    )
+    .await
+    .expect("worker datagram");
+    assert_eq!(
+        client.recv_datagram().await,
+        (client.client_id, b"worker tick".to_vec())
+    );
+
+    client
+        .writer
+        .write_all(third)
+        .await
+        .expect("final fragment");
+    match next_frame(&mut wrd).await {
+        Frame::FromClient { packet } => {
+            let (header, payload) = Header::split_packet(&packet).expect("event");
+            assert_eq!(header.channel, CHANNEL_EVENTS);
+            assert_eq!(payload, b"fragmented event");
+        }
+        other => panic!("expected event FromClient, got {other:?}"),
+    }
+    rig.stop().await;
+}
+
+/// (client-edge: Inbound packet budget) A datagram flood closes and detaches
+/// only the offender; accepted inputs may precede its detach.
+#[tokio::test]
+async fn datagram_flood_closes_only_that_client() {
+    let rig = start("").await;
+    let (session, mut wrd, _wwr) = active_session(&rig, 8).await;
+    let bad = match join(&rig.edge, session, "bad", "").await {
+        Join::Ok(client) => client,
+        Join::Rejected(reason) => panic!("bad client must join: {reason}"),
+    };
+    let healthy = match join(&rig.edge, session, "healthy", "").await {
+        Join::Ok(client) => client,
+        Join::Rejected(reason) => panic!("healthy client must join: {reason}"),
+    };
+    for _ in 0..2 {
+        match next_frame(&mut wrd).await {
+            Frame::ClientAttached { .. } => {}
+            other => panic!("expected ClientAttached, got {other:?}"),
+        }
+    }
+
+    let flood = packet(CHANNEL_STATE, session, bad.client_id, b"flood");
+    for _ in 0..2048 {
+        if bad.conn.send_datagram(flood.clone()).is_err() {
+            break;
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(3), bad.conn.closed())
+        .await
+        .expect("over-budget connection closes");
+    wait_for_detach(&mut wrd, bad.client_id).await;
+
+    healthy.send_input(b"still alive").await;
+    match next_frame(&mut wrd).await {
+        Frame::FromClient { packet } => {
+            let (_, payload) = Header::split_packet(&packet).expect("packet");
+            assert_eq!(payload, b"still alive");
+        }
+        other => panic!("expected healthy FromClient, got {other:?}"),
+    }
+    assert_eq!(poll_player_count(&rig, session, 1).await, 1);
+    rig.stop().await;
+}
+
+/// (client-edge: Inbound packet budget) Each transport separately fits the
+/// initial burst, but their combined traffic must exhaust the shared budget.
+#[tokio::test]
+async fn datagrams_and_stream_packets_share_one_budget() {
+    let rig = start("").await;
+    let (session, mut wrd, _wwr) = active_session(&rig, 8).await;
+    let mut bad = match join(&rig.edge, session, "bad", "").await {
+        Join::Ok(client) => client,
+        Join::Rejected(reason) => panic!("bad client must join: {reason}"),
+    };
+    match next_frame(&mut wrd).await {
+        Frame::ClientAttached { .. } => {}
+        other => panic!("expected ClientAttached, got {other:?}"),
+    }
+
+    let datagram = packet(CHANNEL_STATE, session, bad.client_id, b"d");
+    for _ in 0..512 {
+        if bad.conn.send_datagram(datagram.clone()).is_err() {
+            break;
+        }
+    }
+    let event = packet(CHANNEL_EVENTS, session, bad.client_id, b"e");
+    let stream: Vec<u8> = (0..512).flat_map(|_| event.clone()).collect();
+    let _ = bad.writer.write_all(&stream).await;
+
+    tokio::time::timeout(Duration::from_secs(3), bad.conn.closed())
+        .await
+        .expect("combined traffic exhausts the shared budget");
+    wait_for_detach(&mut wrd, bad.client_id).await;
+    assert_eq!(poll_player_count(&rig, session, 0).await, 0);
     rig.stop().await;
 }
 

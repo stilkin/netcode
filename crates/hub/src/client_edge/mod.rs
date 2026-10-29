@@ -11,7 +11,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -37,6 +37,40 @@ const STALL_WATERMARK: usize = 1024;
 /// Largest incomplete client-to-hub stream buffer. A maximal valid packet is
 /// about 128 KiB, so this leaves ample room for fragmentation.
 const MAX_STREAM_BUF: usize = 256 * 1024;
+
+/// Sustained inbound packets allowed per connection each second.
+const INPUT_PACKETS_PER_SECOND: f64 = 4096.0;
+/// Immediate burst allowed before sustained-rate accounting applies.
+const INPUT_BURST: usize = 512;
+
+/// Per-connection inbound token budget. No timers or waiting: callers get an
+/// immediate yes/no for each complete packet.
+struct InputBudget {
+    tokens: f64,
+    last_refill: Instant,
+}
+
+impl InputBudget {
+    fn new(now: Instant) -> Self {
+        Self {
+            tokens: INPUT_BURST as f64,
+            last_refill: now,
+        }
+    }
+
+    fn try_take(&mut self, now: Instant) -> bool {
+        let elapsed = now
+            .saturating_duration_since(self.last_refill)
+            .as_secs_f64();
+        self.tokens = (self.tokens + elapsed * INPUT_PACKETS_PER_SECOND).min(INPUT_BURST as f64);
+        self.last_refill = now;
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
+}
 
 /// Grace for connection tasks to observe shutdown and exit.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
@@ -363,44 +397,13 @@ async fn relay(
     mut client: ClientHandle,
     shutdown: &mut watch::Receiver<bool>,
 ) {
-    // Stream reading has one owner task, keeping framing state out of the
-    // relay; the select loop receives only parsed packets. `RecvStream::read`
-    // is cancel-safe — this separation is for ownership, not cancellation.
-    let (inbound_tx, mut inbound_rx) =
-        tokio::sync::mpsc::unbounded_channel::<Result<Vec<u8>, ()>>();
-    tokio::spawn(async move {
-        let mut stream_buf: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; 65_536];
-        loop {
-            match events_recv.read(&mut chunk).await {
-                Ok(Some(n)) => {
-                    stream_buf.extend_from_slice(&chunk[..n]);
-                    while let Some((_, end)) = parse_packet(&stream_buf) {
-                        // Validation of the header against this client's
-                        // identity lives in the backplane, as ever.
-                        let packet: Vec<u8> = stream_buf.drain(..end).collect();
-                        if inbound_tx.send(Ok(packet)).is_err() {
-                            return;
-                        }
-                    }
-                    if stream_buf.len() > MAX_STREAM_BUF {
-                        let _ = inbound_tx.send(Err(()));
-                        return;
-                    }
-                }
-                Ok(None) => {
-                    let _ = inbound_tx.send(Err(()));
-                    return;
-                }
-                Err(_) => {
-                    let _ = inbound_tx.send(Err(()));
-                    return;
-                }
-            }
-        }
-    });
+    // One relay owns stream framing and the shared input budget. `read` is
+    // cancel-safe, so competing select branches cannot lose partial frames.
+    let mut stream_buf: Vec<u8> = Vec::new();
+    let mut stream_chunk = [0u8; 65_536];
+    let mut input_budget = InputBudget::new(Instant::now());
 
-    loop {
+    'relay: loop {
         // Backpressure stall guard: a client that stopped reading while its
         // worker keeps sending gets closed, not buffered forever.
         if client.backlog() > STALL_WATERMARK {
@@ -445,17 +448,38 @@ async fn relay(
                 }
             }
             // Client → hub: event packets parsed off the control stream.
-            inbound = inbound_rx.recv() => {
-                match inbound {
-                    Some(Ok(packet)) => client.feed_packet(packet),
-                    _ => break,  // stream ended or malformed
+            read = events_recv.read(&mut stream_chunk) => {
+                match read {
+                    Ok(Some(n)) => {
+                        stream_buf.extend_from_slice(&stream_chunk[..n]);
+                        while let Some((_, end)) = parse_packet(&stream_buf) {
+                            if !input_budget.try_take(Instant::now()) {
+                                warn!(client = client.id, "inbound packet budget exhausted; closing");
+                                break 'relay;
+                            }
+                            // Identity validation still lives in the backplane.
+                            let packet: Vec<u8> = stream_buf.drain(..end).collect();
+                            client.feed_packet(packet);
+                        }
+                        if stream_buf.len() > MAX_STREAM_BUF {
+                            break 'relay;
+                        }
+                    }
+                    Ok(None) => break 'relay,
+                    Err(_) => break 'relay,
                 }
             }
             // Client → hub: state datagrams.
             datagram = conn.receive_datagram() => {
                 match datagram {
-                    Ok(datagram) => client.feed_packet(Vec::from(&datagram[..])),
-                    Err(_) => break,  // connection lost
+                    Ok(datagram) => {
+                        if !input_budget.try_take(Instant::now()) {
+                            warn!(client = client.id, "inbound packet budget exhausted; closing");
+                            break 'relay;
+                        }
+                        client.feed_packet(Vec::from(&datagram[..]));
+                    }
+                    Err(_) => break 'relay,  // connection lost
                 }
             }
             _ = conn.closed() => break,
@@ -483,4 +507,52 @@ fn parse_packet(buf: &[u8]) -> Option<(Header, usize)> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod input_budget_tests {
+    use super::*;
+
+    #[test]
+    fn burst_allows_exactly_512_packets() {
+        let now = Instant::now();
+        let mut budget = InputBudget::new(now);
+        for _ in 0..INPUT_BURST {
+            assert!(budget.try_take(now));
+        }
+        assert!(!budget.try_take(now));
+    }
+
+    #[test]
+    fn tokens_refill_continuously() {
+        let start = Instant::now();
+        let mut budget = InputBudget::new(start);
+        for _ in 0..INPUT_BURST {
+            assert!(budget.try_take(start));
+        }
+        assert!(!budget.try_take(start));
+
+        // One millisecond at 4,096 tokens/sec restores 4.096 tokens.
+        let later = start + Duration::from_millis(1);
+        for _ in 0..4 {
+            assert!(budget.try_take(later));
+        }
+        assert!(!budget.try_take(later));
+    }
+
+    #[test]
+    fn idle_refill_is_capped_at_one_burst() {
+        let start = Instant::now();
+        let mut budget = InputBudget::new(start);
+        for _ in 0..INPUT_BURST {
+            assert!(budget.try_take(start));
+        }
+        assert!(!budget.try_take(start));
+
+        let later = start + Duration::from_secs(60);
+        for _ in 0..INPUT_BURST {
+            assert!(budget.try_take(later));
+        }
+        assert!(!budget.try_take(later));
+    }
 }
