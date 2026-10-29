@@ -40,6 +40,15 @@ async fn start(token: &str, games: Vec<GameConfig>) -> Rig {
 }
 
 async fn start_with_limit(token: &str, games: Vec<GameConfig>, max_sessions: usize) -> Rig {
+    start_with_limit_and_timeout(token, games, max_sessions, Duration::from_secs(30)).await
+}
+
+async fn start_with_limit_and_timeout(
+    token: &str,
+    games: Vec<GameConfig>,
+    max_sessions: usize,
+    request_timeout: Duration,
+) -> Rig {
     let backplane = Backplane::bind_with_timeouts(
         &BackplaneConfig {
             bind: "127.0.0.1:0".into(),
@@ -63,7 +72,7 @@ async fn start_with_limit(token: &str, games: Vec<GameConfig>, max_sessions: usi
     .expect("bind edge")
     .start();
 
-    let lobby = Lobby::bind(
+    let lobby = Lobby::bind_with_request_timeout(
         &LobbyConfig {
             bind: "127.0.0.1:0".into(),
             token: token.to_owned(),
@@ -71,6 +80,7 @@ async fn start_with_limit(token: &str, games: Vec<GameConfig>, max_sessions: usi
         &games,
         backplane.clone(),
         edge.cert_sha256(),
+        request_timeout,
     )
     .await
     .expect("bind lobby")
@@ -543,11 +553,11 @@ async fn documented_routes_answer() {
 
 /// (lobby-api: Request deadline) An incomplete request cannot hold its task
 /// and socket forever, and its expiry does not affect later requests.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn incomplete_request_times_out_without_blocking_others() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let rig = start("", vec![]).await;
+    let rig = start_with_limit_and_timeout("", vec![], 64, Duration::from_millis(50)).await;
     let mut slow = tokio::net::TcpStream::connect(rig.lobby.addr())
         .await
         .expect("connect slow request");
@@ -555,12 +565,8 @@ async fn incomplete_request_times_out_without_blocking_others() {
         .await
         .expect("partial request head");
 
-    // Let the accept loop spawn the request task before advancing its clock.
-    tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_secs(31)).await;
-    tokio::task::yield_now().await;
     let mut response = Vec::new();
-    match tokio::time::timeout(Duration::from_secs(1), slow.read_to_end(&mut response)).await {
+    match tokio::time::timeout(Duration::from_secs(3), slow.read_to_end(&mut response)).await {
         Ok(Ok(0)) => assert!(response.is_empty()),
         other => panic!("slow request must end at the deadline: {other:?}"),
     }

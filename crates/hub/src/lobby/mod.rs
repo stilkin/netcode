@@ -36,6 +36,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Service {
     listener: TcpListener,
     state: Arc<State>,
+    request_timeout: Duration,
 }
 
 struct State {
@@ -54,6 +55,18 @@ impl Service {
         backplane: Backplane,
         cert_sha256: [u8; 32],
     ) -> Result<Self> {
+        Self::bind_with_request_timeout(cfg, games, backplane, cert_sha256, REQUEST_TIMEOUT).await
+    }
+
+    /// Binds with an explicit total request timeout (test seams use a short
+    /// deadline; production uses [`REQUEST_TIMEOUT`] through [`Self::bind`]).
+    pub async fn bind_with_request_timeout(
+        cfg: &LobbyConfig,
+        games: &[GameConfig],
+        backplane: Backplane,
+        cert_sha256: [u8; 32],
+        request_timeout: Duration,
+    ) -> Result<Self> {
         let bind: SocketAddr = cfg.bind.parse().context("parse lobby.bind")?;
         let listener = TcpListener::bind(bind)
             .await
@@ -66,6 +79,7 @@ impl Service {
                 backplane,
                 cert_sha256,
             }),
+            request_timeout,
         })
     }
 
@@ -74,6 +88,7 @@ impl Service {
         let (shutdown, mut shutdown_rx) = watch::channel(false);
         let addr = self.listener.local_addr().expect("bound tcp listener");
         let state = self.state;
+        let request_timeout = self.request_timeout;
         let join = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -81,7 +96,7 @@ impl Service {
                         let Ok((stream, _)) = accepted else { continue };
                         let state = state.clone();
                         tokio::spawn(async move {
-                            match tokio::time::timeout(REQUEST_TIMEOUT, serve_one(stream, state)).await {
+                            match tokio::time::timeout(request_timeout, serve_one(stream, state)).await {
                                 Ok(Ok(())) => {}
                                 Ok(Err(err)) => warn!(%err, "lobby request failed"),
                                 Err(_) => warn!("lobby request timed out"),
