@@ -134,7 +134,7 @@ impl Rig {
             let mut tick: u64 = 0;
             while let Some(frame) = commands_rx.recv().await {
                 match frame {
-                    Frame::ClientAttached { client_id } => {
+                    Frame::ClientAttached { client_id, .. } => {
                         // Constant greeting: client ids are never reused
                         // across runs, so fixtures must not embed them.
                         let greeting = packet(CHANNEL_EVENTS, session, client_id, b"welcome");

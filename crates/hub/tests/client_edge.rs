@@ -340,14 +340,21 @@ async fn handshake_accepts_and_greets_over_the_stream() {
     let rig = start("").await;
     let (session, mut wrd, mut wwr) = active_session(&rig, 8).await;
 
-    let mut client = match join(&rig.edge, session, "p1", "").await {
+    let player_name = "Zoë 🎮";
+    let mut client = match join(&rig.edge, session, player_name, "").await {
         Join::Ok(client) => client,
         Join::Rejected(reason) => panic!("expected accept, got: {reason}"),
     };
 
     // The worker observes the attach.
     match next_frame(&mut wrd).await {
-        Frame::ClientAttached { client_id } => assert_eq!(client_id, client.client_id),
+        Frame::ClientAttached {
+            client_id,
+            player_name: got_name,
+        } => {
+            assert_eq!(client_id, client.client_id);
+            assert_eq!(got_name, player_name);
+        }
         other => panic!("expected ClientAttached, got {other:?}"),
     }
 
@@ -473,7 +480,7 @@ async fn stalled_negotiation_does_not_block_joins() {
         Join::Rejected(reason) => panic!("healthy client must join: {reason}"),
     };
     match next_frame(&mut wrd).await {
-        Frame::ClientAttached { client_id } => assert_eq!(client_id, client.client_id),
+        Frame::ClientAttached { client_id, .. } => assert_eq!(client_id, client.client_id),
         other => panic!("expected ClientAttached, got {other:?}"),
     }
 
@@ -833,7 +840,7 @@ async fn disconnect_detaches_the_client() {
     };
     let client_id = client.client_id;
     match next_frame(&mut wrd).await {
-        Frame::ClientAttached { client_id: id } => assert_eq!(id, client_id),
+        Frame::ClientAttached { client_id: id, .. } => assert_eq!(id, client_id),
         other => panic!("expected ClientAttached, got {other:?}"),
     }
 

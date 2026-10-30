@@ -301,11 +301,20 @@ async fn fanout_routing_and_stale_unicast() {
     assert_eq!(payload, b"alive");
 
     // Drain the ClientAttached notifications queued by the two attaches.
-    for _ in 0..2 {
+    for (want_id, want_name) in [(c1.id, "p1"), (c2.id, "p2")] {
         let frame = conn::read_frame(&mut rd)
             .await
             .expect("attach notification");
-        assert!(matches!(frame, Frame::ClientAttached { .. }), "{frame:?}");
+        match frame {
+            Frame::ClientAttached {
+                client_id,
+                player_name,
+            } => {
+                assert_eq!(client_id, want_id);
+                assert_eq!(player_name, want_name);
+            }
+            other => panic!("expected ClientAttached, got {other:?}"),
+        }
     }
 
     // Client→worker packets are forwarded in order.
@@ -363,7 +372,7 @@ async fn expect_attached(rd: &mut tokio::net::tcp::OwnedReadHalf, want: u32) {
         .expect("notification in time")
         .expect("frame parses")
     {
-        Frame::ClientAttached { client_id } => assert_eq!(client_id, want),
+        Frame::ClientAttached { client_id, .. } => assert_eq!(client_id, want),
         other => panic!("expected ClientAttached({want}), got {other:?}"),
     }
 }

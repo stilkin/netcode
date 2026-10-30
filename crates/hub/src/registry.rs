@@ -181,7 +181,7 @@ impl Registry {
     }
 
     /// Attaches a client to an active session, enforcing capacity.
-    pub fn attach(&mut self, id: SessionId, player_name: &str) -> Result<ClientId, AttachError> {
+    pub fn attach(&mut self, id: SessionId) -> Result<ClientId, AttachError> {
         // Validate before allocating, so a failed attach consumes no id.
         {
             let entry = self.sessions.get(&id).ok_or(AttachError::NotFound(id))?;
@@ -195,7 +195,6 @@ impl Registry {
         let client_id = self.alloc_client_id();
         let entry = self.sessions.get_mut(&id).expect("session checked above");
         entry.client_ids.push(client_id);
-        let _ = player_name; // reserved for directory listings
         Ok(client_id)
     }
 
@@ -302,8 +301,8 @@ mod tests {
     fn player_count_tracks_membership() {
         let mut registry = Registry::new();
         let id = registry.register_self(&spec()).expect("register");
-        let c1 = registry.attach(id, "p1").expect("attach 1");
-        let c2 = registry.attach(id, "p2").expect("attach 2");
+        let c1 = registry.attach(id).expect("attach 1");
+        let c2 = registry.attach(id).expect("attach 2");
         assert_eq!(registry.list()[0].player_count, 2);
         registry.detach(id, c1).expect("detach");
         registry.detach(id, c2).expect("detach");
@@ -315,9 +314,9 @@ mod tests {
     fn full_session_refuses_attach() {
         let mut registry = Registry::new();
         let id = registry.register_self(&spec()).expect("register");
-        registry.attach(id, "p1").expect("attach 1");
-        registry.attach(id, "p2").expect("attach 2");
-        assert_eq!(registry.attach(id, "p3"), Err(AttachError::Full(id)));
+        registry.attach(id).expect("attach 1");
+        registry.attach(id).expect("attach 2");
+        assert_eq!(registry.attach(id), Err(AttachError::Full(id)));
         assert_eq!(registry.get(id).expect("session").player_count, 2);
     }
 
@@ -326,11 +325,9 @@ mod tests {
     fn pending_sessions_are_not_joinable() {
         let mut registry = Registry::new();
         let id = registry.create_pending(&spec()).expect("create pending");
-        assert_eq!(registry.attach(id, "p1"), Err(AttachError::NotJoinable(id)));
+        assert_eq!(registry.attach(id), Err(AttachError::NotJoinable(id)));
         registry.activate(id).expect("activate");
-        registry
-            .attach(id, "p1")
-            .expect("joinable after activation");
+        registry.attach(id).expect("joinable after activation");
     }
 
     /// (session-registry: Session lifecycle)
@@ -338,12 +335,12 @@ mod tests {
     fn close_is_idempotent_and_reports_clients() {
         let mut registry = Registry::new();
         let id = registry.register_self(&spec()).expect("register");
-        registry.attach(id, "p1").expect("attach");
+        registry.attach(id).expect("attach");
         let detached = registry.close(id).expect("first close");
         assert_eq!(detached.len(), 1);
         assert_eq!(registry.close(id), None, "second close is a no-op");
         assert_eq!(registry.get(id).expect("closed session").player_count, 0);
-        assert_eq!(registry.attach(id, "p2"), Err(AttachError::NotJoinable(id)));
+        assert_eq!(registry.attach(id), Err(AttachError::NotJoinable(id)));
     }
 
     /// (session-registry: Live session capacity) Pending and active entries
@@ -393,16 +390,13 @@ mod tests {
         let oldest = closed[0];
         let newest = *closed.last().expect("newest closed id");
         assert!(registry.get(oldest).is_none(), "oldest was evicted");
-        assert_eq!(
-            registry.attach(oldest, "p"),
-            Err(AttachError::NotFound(oldest))
-        );
+        assert_eq!(registry.attach(oldest), Err(AttachError::NotFound(oldest)));
         assert_eq!(
             registry.get(newest).expect("newest tombstone").state,
             SessionState::Closed
         );
         assert_eq!(
-            registry.attach(newest, "p"),
+            registry.attach(newest),
             Err(AttachError::NotJoinable(newest))
         );
         assert_eq!(
@@ -433,7 +427,7 @@ mod tests {
             registry.get(id).expect("tombstone remains").state,
             SessionState::Closed
         );
-        assert_eq!(registry.attach(id, "p"), Err(AttachError::NotJoinable(id)));
+        assert_eq!(registry.attach(id), Err(AttachError::NotJoinable(id)));
     }
 
     /// (session-registry: Unique session ids)

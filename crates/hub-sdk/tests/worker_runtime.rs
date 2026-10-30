@@ -13,7 +13,7 @@ type Inputs = Arc<Mutex<Vec<(u32, Vec<u8>)>>>;
 
 #[derive(Default, Clone)]
 struct Recording {
-    attaches: Arc<Mutex<Vec<u32>>>,
+    attaches: Arc<Mutex<Vec<(u32, String)>>>,
     detaches: Arc<Mutex<Vec<u32>>>,
     inputs: Inputs,
     ticks: Arc<Mutex<Vec<u32>>>,
@@ -28,8 +28,12 @@ impl Recording {
 struct RecordingGame(Recording);
 
 impl GameSession for RecordingGame {
-    fn on_attach(&mut self, _ctx: &SessionCtx, client_id: u32, _player_name: &str) {
-        self.0.attaches.lock().unwrap().push(client_id);
+    fn on_attach(&mut self, _ctx: &SessionCtx, client_id: u32, player_name: &str) {
+        self.0
+            .attaches
+            .lock()
+            .unwrap()
+            .push((client_id, player_name.to_owned()));
     }
 
     fn on_detach(&mut self, _ctx: &SessionCtx, client_id: u32) {
@@ -107,8 +111,14 @@ async fn worker_runtime_full_loop() {
 
     // Script: attach two clients, feed one input to client 1, detach client 2.
     for frame in [
-        backplane::Frame::ClientAttached { client_id: 1 },
-        backplane::Frame::ClientAttached { client_id: 2 },
+        backplane::Frame::ClientAttached {
+            client_id: 1,
+            player_name: "Zoë 🎮".into(),
+        },
+        backplane::Frame::ClientAttached {
+            client_id: 2,
+            player_name: "p2".into(),
+        },
         backplane::Frame::FromClient {
             packet: Header::new(CHANNEL_STATE, 9, 1, 1, 3)
                 .encode_packet(b"abc")
@@ -198,7 +208,10 @@ async fn worker_runtime_full_loop() {
         .expect("worker task");
     assert!(outcome.is_ok(), "hub loss is a clean stop: {outcome:?}");
 
-    assert_eq!(*recording.attaches.lock().unwrap(), vec![1, 2]);
+    assert_eq!(
+        *recording.attaches.lock().unwrap(),
+        vec![(1, "Zoë 🎮".to_owned()), (2, "p2".to_owned()),]
+    );
     assert_eq!(*recording.detaches.lock().unwrap(), vec![2]);
     assert_eq!(
         *recording.inputs.lock().unwrap(),

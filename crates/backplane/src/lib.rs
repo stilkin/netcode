@@ -80,7 +80,7 @@ pub enum Frame {
     /// both: liveness, empty body.
     Heartbeat,
     /// h→w: a client joined the worker's session.
-    ClientAttached { client_id: u32 },
+    ClientAttached { client_id: u32, player_name: String },
     /// h→w: a client left the worker's session.
     ClientDetached { client_id: u32 },
     /// w→h: packet to the client named in the packet header.
@@ -151,7 +151,13 @@ impl Frame {
             }
             Frame::Registered { session_id } => body.write_u32(*session_id),
             Frame::Heartbeat => {}
-            Frame::ClientAttached { client_id } => body.write_u32(*client_id),
+            Frame::ClientAttached {
+                client_id,
+                player_name,
+            } => {
+                body.write_u32(*client_id);
+                body.write_str(player_name)?;
+            }
             Frame::ClientDetached { client_id } => body.write_u32(*client_id),
             Frame::ToClient { packet }
             | Frame::Broadcast { packet }
@@ -220,6 +226,7 @@ impl Frame {
             Opcode::Heartbeat => Frame::Heartbeat,
             Opcode::ClientAttached => Frame::ClientAttached {
                 client_id: body.read_u32()?,
+                player_name: body.read_str()?,
             },
             Opcode::ClientDetached => Frame::ClientDetached {
                 client_id: body.read_u32()?,

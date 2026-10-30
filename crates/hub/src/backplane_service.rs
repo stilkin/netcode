@@ -575,21 +575,24 @@ impl Core {
                 player_name,
                 resp,
             } => {
-                let outcome = self
-                    .registry
-                    .attach(session_id, &player_name)
-                    .map(|client_id| {
-                        let (tx, rx) = mpsc::unbounded_channel();
-                        self.clients
-                            .insert(client_id, ClientRoute { session_id, tx });
-                        self.notify_worker(session_id, Frame::ClientAttached { client_id });
-                        ClientHandle {
-                            id: client_id,
-                            session_id,
-                            rx,
-                            cmd: self.cmd_tx.clone(),
-                        }
-                    });
+                let outcome = self.registry.attach(session_id).map(|client_id| {
+                    let (tx, rx) = mpsc::unbounded_channel();
+                    self.clients
+                        .insert(client_id, ClientRoute { session_id, tx });
+                    self.notify_worker(
+                        session_id,
+                        Frame::ClientAttached {
+                            client_id,
+                            player_name,
+                        },
+                    );
+                    ClientHandle {
+                        id: client_id,
+                        session_id,
+                        rx,
+                        cmd: self.cmd_tx.clone(),
+                    }
+                });
                 let _ = resp.send(outcome);
             }
             Command::Detach {

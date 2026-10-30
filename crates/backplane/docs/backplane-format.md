@@ -28,7 +28,7 @@ frames before registration are violations.
 | `Register` | 2 | w→h | `claimed_id: u32, game_type: str, display_name: str, max_players: u16, payload_schema_version: u16` |
 | `Registered` | 3 | h→w | `session_id: u32` |
 | `Heartbeat` | 4 | both | *(empty)* |
-| `ClientAttached` | 5 | h→w | `client_id: u32` |
+| `ClientAttached` | 5 | h→w | `client_id: u32, player_name: str` |
 | `ClientDetached` | 6 | h→w | `client_id: u32` |
 | `ToClient` | 7 | w→h | `packet: bytes` — client packet; recipient = its header `client_id` |
 | `ToMany` | 8 | w→h | `count: u16, client_ids: u32×count, packet: bytes` |

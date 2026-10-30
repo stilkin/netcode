@@ -113,6 +113,7 @@ impl SessionCtx {
 /// The entire networking-facing surface of a game.
 pub trait GameSession {
     /// A client joined. Called before any of that client's inputs.
+    /// `player_name` is the joining client's unverified display name.
     fn on_attach(&mut self, ctx: &SessionCtx, client_id: u32, player_name: &str);
     /// A client left.
     fn on_detach(&mut self, ctx: &SessionCtx, client_id: u32);
@@ -247,8 +248,8 @@ pub async fn run(config: WorkerConfig, mut game: impl GameSession) -> Result<(),
     loop {
         tokio::select! {
             frame = frames_rx.recv() => match frame {
-                Some(Frame::ClientAttached { client_id }) => {
-                    game.on_attach(&ctx, client_id, "");
+                Some(Frame::ClientAttached { client_id, player_name }) => {
+                    game.on_attach(&ctx, client_id, &player_name);
                 }
                 Some(Frame::ClientDetached { client_id }) => {
                     game.on_detach(&ctx, client_id);

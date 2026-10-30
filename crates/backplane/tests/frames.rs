@@ -32,7 +32,14 @@ fn round_trip_every_opcode() {
         },
         Frame::Registered { session_id: 7 },
         Frame::Heartbeat,
-        Frame::ClientAttached { client_id: 3 },
+        Frame::ClientAttached {
+            client_id: 3,
+            player_name: "Zoë 🎮".into(),
+        },
+        Frame::ClientAttached {
+            client_id: 4,
+            player_name: String::new(),
+        },
         Frame::ClientDetached { client_id: 3 },
         Frame::ToClient {
             packet: vec![1, 2, 3],
@@ -57,6 +64,21 @@ fn round_trip_every_opcode() {
         );
         assert_eq!(bytes[4], frame.opcode().to_u16() as u8);
     }
+}
+
+#[test]
+fn client_attached_layout_includes_player_name() {
+    let bytes = Frame::ClientAttached {
+        client_id: 3,
+        player_name: "A".into(),
+    }
+    .encode_to_vec()
+    .expect("encode");
+    assert_eq!(
+        bytes,
+        [9, 0, 0, 0, 5, 0, 3, 0, 0, 0, 1, 0, b'A'],
+        "length, opcode, client id, then a length-prefixed UTF-8 name"
+    );
 }
 
 #[test]
@@ -108,6 +130,17 @@ fn truncated_bodies_are_rejected() {
     .expect("encode");
     assert!(matches!(
         Frame::decode(&bytes[4..bytes.len() - 2]),
+        Err(Error::MalformedBody(_))
+    ));
+
+    let attached = Frame::ClientAttached {
+        client_id: 3,
+        player_name: "player".into(),
+    }
+    .encode_to_vec()
+    .expect("encode");
+    assert!(matches!(
+        Frame::decode(&attached[4..attached.len() - 1]),
         Err(Error::MalformedBody(_))
     ));
 }
