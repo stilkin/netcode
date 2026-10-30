@@ -23,6 +23,7 @@ use tracing::{info, warn};
 
 use crate::backplane_service::ServiceHandle as Backplane;
 use crate::config::{GameConfig, LobbyConfig};
+use crate::hex;
 use crate::registry::{ClientId, SessionId, SessionState};
 use crate::spawn::{SpawnError, SpawnRequest};
 
@@ -457,8 +458,4 @@ async fn create_session(request: &Request, state: &State) -> Response {
             format!("failed to start worker: {err}"),
         ),
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

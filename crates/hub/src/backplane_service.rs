@@ -370,8 +370,8 @@ async fn handle_connection(
 
     // --- registration phase (bounded) ---
     let hello = tokio::time::timeout(timeouts.registration, conn::read_frame(&mut rd)).await;
-    let frame = match hello {
-        Ok(Ok(Frame::Hello { token: got })) if token_is_valid(&token, &got) => got,
+    match hello {
+        Ok(Ok(Frame::Hello { token: got })) if token_is_valid(&token, &got) => {}
         Ok(Ok(frame)) => {
             warn!(%peer, frame = ?frame.opcode(), "first frame was not an acceptable Hello");
             return;
@@ -385,7 +385,6 @@ async fn handle_connection(
             return;
         }
     };
-    let _ = frame;
 
     let register = tokio::time::timeout(timeouts.registration, conn::read_frame(&mut rd)).await;
     let (claimed_id, spec) = match register {

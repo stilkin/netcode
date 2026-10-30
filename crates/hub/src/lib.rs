@@ -37,6 +37,11 @@ pub const EXIT_FATAL: u8 = 2;
 /// Exit code for the impatient second signal.
 const EXIT_IMPATIENT: i32 = 130;
 
+/// Lowercase hexadecimal for certificate fingerprints in logs and HTTP DTOs.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// One server, many games.
 #[derive(Debug, Parser)]
 #[command(name = "hub", version, about)]

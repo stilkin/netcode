@@ -24,6 +24,7 @@ use wtransport::{Endpoint, Identity, ServerConfig, VarInt};
 
 use crate::backplane_service::{ClientHandle, ServiceHandle as Backplane};
 use crate::config::ClientEdgeConfig;
+use crate::hex;
 use protocol::{Header, MAX_NAME_LEN, MAX_TOKEN_LEN};
 
 /// Wire channels, as defined by the hub-sdk contract.
@@ -340,7 +341,6 @@ async fn reject(conn: &Connection, send: &mut wtransport::SendStream, reason: &s
     conn.close(VarInt::from_u32(0), b"rejected");
 }
 /// oversized length field can allocate unbounded memory.
-/// oversized length field can allocate unbounded memory.
 async fn read_connect(
     recv: &mut wtransport::RecvStream,
 ) -> std::result::Result<protocol::Connect, &'static str> {
@@ -503,10 +503,6 @@ fn parse_packet(buf: &[u8]) -> Option<(Header, usize)> {
     let header = Header::decode(buf).ok()?;
     let end = header.packet_len();
     (buf.len() >= end).then_some((header, end))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[cfg(test)]
