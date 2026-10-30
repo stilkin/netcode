@@ -17,6 +17,7 @@ crates/
   sample-worker/         echo arena — reference game + test fixture
   conformance/           netcode-bots: bot client, scenario runner,
                          fixtures, load profiles (scenarios/smoke.toml)
+  xtask/                 local release build/package/validation pipeline
 docs/                    project documentation (you are here)
 openspec/
   specs/<capability>/    current behavior — source of truth
@@ -111,25 +112,16 @@ to judge the image, so a missing or stale debug binary cannot weaken the check.
 
 ## Coverage
 
-Coverage is measured with `cargo-llvm-cov`:
+Coverage is measured with `cargo-llvm-cov` rather than tracked as a fixed
+snapshot that drifts after every change:
 
 ```sh
 cargo install cargo-llvm-cov            # once; also: rustup component add llvm-tools-preview
 cargo llvm-cov --workspace --summary-only   # add --html for a browsable report
 ```
 
-Current state (post-release-pipeline): product crates measure ~89% line
-coverage (`cargo llvm-cov -p hub -p protocol -p backplane -p hub-sdk -p
-sample-worker -p conformance --summary-only`); `registry` and the protocol
-header codec are at 100% lines. `conformance` sits lower — bot join-error
-and timeout branches are deliberately unchased, and its `netcode-bots`
-binary is thin glue. `xtask` is excluded from the number by convention: it
-is release glue (process-driving code) whose proof is the release
-rehearsal, not unit tests. The uncovered remainder is dominated
-by branches deliberately not chased with contrived tests: OS-specific signal
-fallbacks, the impatient second-signal exit (130), fatal-exit mapping, SDK
-connection-failure error paths, and join-frame decode error arms. Re-measure
-with `cargo llvm-cov --workspace --summary-only`.
+`xtask` is primarily process-driving release glue; its strongest validation is
+the release rehearsal, while unit tests cover packaging and failure paths.
 
 ## Conventions
 
@@ -139,9 +131,10 @@ with `cargo llvm-cov --workspace --summary-only`.
   client edge; users receive prebuilt artifacts and never compile it.
   `libc` (bindings crate) is allowed as a dev-dependency where a test needs
   a raw signal.
-- **Golden vectors** (`crates/protocol/tests/golden.rs`) pin the wire format.
-  Never regenerate them casually; changing one is a protocol-evolution decision
-  recorded in the change's design doc.
+- **Golden vectors and exact-layout tests** (`crates/protocol/tests/golden.rs`,
+  `crates/backplane/tests/frames.rs`) pin the wire formats. Never regenerate
+  or change them casually; doing so is a protocol-evolution decision recorded
+  in the change's design doc.
 - **Unknown input is rejected at the boundary**: config keys, packet magic,
   protocol versions.
 - **Commits**: small, conventional-ish prefixes (`feat`, `fix`, `chore`,

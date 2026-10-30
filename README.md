@@ -8,8 +8,8 @@ itself is never rebuilt for new games.
 
 > **Status:** feature-complete — wire protocol, hub runtime, worker backplane
 > with game SDK, WebTransport client edge, lobby/admin HTTP API, conformance
-> bots, and a self-validating local release pipeline. 102 tests, version-
-> controlled commit/push gates, no hosted CI (by decision).
+> bots, and a self-validating local release pipeline. Version-controlled
+> commit/push gates, no hosted CI (by decision).
 
 ## What is the project?
 
@@ -52,7 +52,7 @@ to the client edge; users receive prebuilt artifacts and never compile it.
 
 ## Installation
 
-**Run it with docker** (lowest entry bar — no toolchain at all):
+**Run it with Docker** (lowest entry bar — no toolchain at all):
 
 ```sh
 docker build -t netcode-hub .
@@ -60,8 +60,8 @@ docker run --rm -p 4433:4433/udp -p 8080:8080 netcode-hub
 # then open http://localhost:8080/ and click "create Echo Arena"
 ```
 
-**Or run a release binary** (from the GitHub releases page): `hub`,
-`sample-worker`, and `netcode-bots` in one archive with an example
+**Or run a release binary** from [GitHub releases](https://github.com/stilkin/netcode/releases):
+`hub`, `sample-worker`, and `netcode-bots` in one archive with an example
 `hub.toml` — static Linux (musl) and Windows builds, plus `SHA256SUMS`.
 
 **Or build from source.** You need a current stable Rust toolchain and a C
@@ -70,15 +70,16 @@ required by `ring` in the transport tree above):
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # if needed
-git clone <this-repo> && cd netcode
+git clone https://github.com/stilkin/netcode.git && cd netcode
 cargo build --release
 ```
 
 ## Configuration
 
 The hub reads an optional TOML file (`hub.toml` in the working directory;
-override with `--config`). A missing file means all defaults. **Unknown keys
-are rejected** with an error naming the key — typos fail loudly.
+override with `--config`). A missing file means all defaults, including an
+**empty game catalog**; add at least one `[[games]]` entry to create sessions.
+**Unknown keys are rejected** with an error naming the key — typos fail loudly.
 
 ```toml
 # hub.toml — all keys optional
@@ -103,9 +104,11 @@ game_type = "echo-arena"
 display_name = "Echo Arena"
 max_players = 8
 payload_schema_version = 1
-worker = "target/debug/sample-worker"
+worker = "target/release/sample-worker"
 session_config_json = '{"tick_hz":60}'
 ```
+
+On Windows, set `worker = "target/release/sample-worker.exe"` instead.
 
 `RUST_LOG` always overrides `log_level`. `backplane.max_sessions` bounds new
 spawned and self-registered sessions; `0` disables creation, and closing a
@@ -125,9 +128,9 @@ error · `130` second signal during shutdown.
 ## Running
 
 ```sh
-cargo run -p hub                        # dev run with defaults
-cargo run -p hub -- --config hub.toml   # explicit config
-hub --version                           # → hub 0.1.0
+cargo run -p hub                                # dev run with defaults
+cargo run --release -p hub -- --config hub.toml # release build + catalog
+cargo run -p hub -- --version                   # → hub 0.1.0
 ```
 
 At boot the hub binds all three listeners — backplane (loopback TCP),
@@ -161,8 +164,8 @@ profiles ([docs/development.md](docs/development.md)).
   session listing/creation/closure, client kick, plus cert-hash and test-page
   routes — all on the `[lobby]` listener. A drift-guard test keeps the file
   honest against the implementation.
-- **Database:** none, by design. Session and game state live in memory in the
-  game-worker processes; persistence is explicitly out of scope
+- **Database:** none, by design. Session metadata lives in hub memory; game
+  state lives in game-worker memory. Persistence is explicitly out of scope
   ([docs/roadmap.md](docs/roadmap.md)).
 
 ## Documentation
@@ -193,7 +196,7 @@ publishing).
 ## Contributing / development
 
 ```sh
-cargo test --workspace                                  # 102 tests
+cargo test --workspace                                  # unit + integration tests
 cargo fmt --all -- --check                              # gate: formatting
 cargo clippy --workspace --all-targets -- -D warnings   # gate: lints
 ```

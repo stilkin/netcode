@@ -68,7 +68,7 @@ UTF-8 with a `u16` byte length. Pinned by golden vectors alongside the header.
 | 4      | n    | token         | shared secret; empty when the hub runs open |
 | 4+n    | 4    | session_id    | the session to join |
 | 8+n    | 2    | name_len      | ≤ 64 |
-| 10+n   | m    | name          | player display name |
+| 10+n   | m    | name          | unverified player display name, forwarded to the worker on attach |
 
 ### `Accept` (hub → client, kind `0x02`)
 

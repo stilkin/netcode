@@ -28,7 +28,7 @@ frames before registration are violations.
 | `Register` | 2 | w→h | `claimed_id: u32, game_type: str, display_name: str, max_players: u16, payload_schema_version: u16` |
 | `Registered` | 3 | h→w | `session_id: u32` |
 | `Heartbeat` | 4 | both | *(empty)* |
-| `ClientAttached` | 5 | h→w | `client_id: u32, player_name: str` |
+| `ClientAttached` | 5 | h→w | `client_id: u32, player_name: str` — id plus the client's unverified display name |
 | `ClientDetached` | 6 | h→w | `client_id: u32` |
 | `ToClient` | 7 | w→h | `packet: bytes` — client packet; recipient = its header `client_id` |
 | `ToMany` | 8 | w→h | `count: u16, client_ids: u32×count, packet: bytes` |
@@ -43,7 +43,11 @@ frames before registration are violations.
   `Registered`.
 - `Register.claimed_id != 0`: must name a **pending** session the hub created
   when it spawned this worker; the hub activates it and replies `Registered`.
-  Anything else closes the connection.
+  This claim is accepted even at the configured live-session limit.
+- Self-registration (`claimed_id == 0`) at the live-session limit is rejected
+  without allocating a session id. Pending and active sessions count toward
+  the limit; closed sessions do not.
+- Anything else closes the connection.
 
 ## Liveness
 

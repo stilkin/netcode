@@ -134,7 +134,7 @@ components:
       type: object
       properties:
         id: { type: integer }
-        state: { type: string, enum: [pending, active, closed] }
+        state: { type: string, enum: [pending, active] }
         game_type: { type: string }
         display_name: { type: string }
         max_players: { type: integer }
