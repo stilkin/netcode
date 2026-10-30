@@ -71,8 +71,24 @@ pub enum RegistryError {
 }
 
 struct SessionEntry {
-    info: SessionInfo,
+    id: SessionId,
+    state: SessionState,
+    spec: SessionSpec,
     client_ids: Vec<ClientId>,
+}
+
+impl SessionEntry {
+    fn snapshot(&self) -> SessionInfo {
+        SessionInfo {
+            id: self.id,
+            state: self.state,
+            game_type: self.spec.game_type.clone(),
+            display_name: self.spec.display_name.clone(),
+            max_players: self.spec.max_players,
+            payload_schema_version: self.spec.payload_schema_version,
+            player_count: self.client_ids.len() as u16,
+        }
+    }
 }
 
 /// The registry. Ids are monotonic and never reused while the process runs.
@@ -126,7 +142,7 @@ impl Registry {
         let live = self
             .sessions
             .values()
-            .filter(|entry| entry.info.state != SessionState::Closed)
+            .filter(|entry| entry.state != SessionState::Closed)
             .count();
         if live >= self.max_sessions {
             return None;
@@ -135,15 +151,9 @@ impl Registry {
         self.sessions.insert(
             id,
             SessionEntry {
-                info: SessionInfo {
-                    id,
-                    state: SessionState::Pending,
-                    game_type: spec.game_type.clone(),
-                    display_name: spec.display_name.clone(),
-                    max_players: spec.max_players,
-                    payload_schema_version: spec.payload_schema_version,
-                    player_count: 0,
-                },
+                id,
+                state: SessionState::Pending,
+                spec: spec.clone(),
                 client_ids: Vec::new(),
             },
         );
@@ -163,10 +173,10 @@ impl Registry {
             .sessions
             .get_mut(&id)
             .ok_or(RegistryError::NotFound(id))?;
-        if entry.info.state != SessionState::Pending {
+        if entry.state != SessionState::Pending {
             return Err(RegistryError::NotPending(id));
         }
-        entry.info.state = SessionState::Active;
+        entry.state = SessionState::Active;
         Ok(())
     }
 
@@ -175,16 +185,15 @@ impl Registry {
         // Validate before allocating, so a failed attach consumes no id.
         {
             let entry = self.sessions.get(&id).ok_or(AttachError::NotFound(id))?;
-            if entry.info.state != SessionState::Active {
+            if entry.state != SessionState::Active {
                 return Err(AttachError::NotJoinable(id));
             }
-            if entry.info.player_count >= entry.info.max_players {
+            if entry.client_ids.len() >= usize::from(entry.spec.max_players) {
                 return Err(AttachError::Full(id));
             }
         }
         let client_id = self.alloc_client_id();
         let entry = self.sessions.get_mut(&id).expect("session checked above");
-        entry.info.player_count += 1;
         entry.client_ids.push(client_id);
         let _ = player_name; // reserved for directory listings
         Ok(client_id)
@@ -202,7 +211,6 @@ impl Registry {
             .position(|&c| c == client_id)
             .ok_or(RegistryError::NoSuchClient(id, client_id))?;
         entry.client_ids.swap_remove(pos);
-        entry.info.player_count = entry.client_ids.len() as u16;
         Ok(())
     }
 
@@ -212,11 +220,10 @@ impl Registry {
     /// the closed history exceeds its cap.
     pub fn close(&mut self, id: SessionId) -> Option<Vec<ClientId>> {
         let entry = self.sessions.get_mut(&id)?;
-        if entry.info.state == SessionState::Closed {
+        if entry.state == SessionState::Closed {
             return None;
         }
-        entry.info.state = SessionState::Closed;
-        entry.info.player_count = 0;
+        entry.state = SessionState::Closed;
         let clients = std::mem::take(&mut entry.client_ids);
 
         self.closed_order.push_back(id);
@@ -235,13 +242,14 @@ impl Registry {
     pub fn client_ids(&self, id: SessionId) -> Option<&[ClientId]> {
         self.sessions
             .get(&id)
-            .filter(|entry| entry.info.state == SessionState::Active)
+            .filter(|entry| entry.state == SessionState::Active)
             .map(|entry| entry.client_ids.as_slice())
     }
 
-    /// Metadata for one session in any state.
-    pub fn get(&self, id: SessionId) -> Option<SessionInfo> {
-        self.sessions.get(&id).map(|entry| entry.info.clone())
+    /// Metadata for one session in any state, including closed tombstones.
+    #[cfg(test)]
+    fn get(&self, id: SessionId) -> Option<SessionInfo> {
+        self.sessions.get(&id).map(SessionEntry::snapshot)
     }
 
     /// All sessions that are not closed — what a server browser shows.
@@ -249,8 +257,8 @@ impl Registry {
         let mut sessions: Vec<SessionInfo> = self
             .sessions
             .values()
-            .map(|entry| entry.info.clone())
-            .filter(|info| info.state != SessionState::Closed)
+            .filter(|entry| entry.state != SessionState::Closed)
+            .map(SessionEntry::snapshot)
             .collect();
         sessions.sort_by_key(|info| info.id);
         sessions
@@ -296,10 +304,10 @@ mod tests {
         let id = registry.register_self(&spec()).expect("register");
         let c1 = registry.attach(id, "p1").expect("attach 1");
         let c2 = registry.attach(id, "p2").expect("attach 2");
-        assert_eq!(registry.get(id).expect("session").player_count, 2);
+        assert_eq!(registry.list()[0].player_count, 2);
         registry.detach(id, c1).expect("detach");
         registry.detach(id, c2).expect("detach");
-        assert_eq!(registry.get(id).expect("session").player_count, 0);
+        assert_eq!(registry.list()[0].player_count, 0);
     }
 
     /// (session-registry: Capacity enforcement)
@@ -334,6 +342,7 @@ mod tests {
         let detached = registry.close(id).expect("first close");
         assert_eq!(detached.len(), 1);
         assert_eq!(registry.close(id), None, "second close is a no-op");
+        assert_eq!(registry.get(id).expect("closed session").player_count, 0);
         assert_eq!(registry.attach(id, "p2"), Err(AttachError::NotJoinable(id)));
     }
 
